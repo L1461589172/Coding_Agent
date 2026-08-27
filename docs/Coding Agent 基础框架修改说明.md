@@ -30,6 +30,8 @@
 
 ## 3. 文件与职责清单
 
+本节保留 M0 交付时的简要清单。前后端逐文件功能、已实现与待实现部分，统一维护在[项目结构与功能设计文档](Coding%20Agent%20项目结构与功能设计文档.md)第 9 节，包含当前源码树、调用关系、接口对照和测试文件。
+
 ### 3.1 根目录与工程配置
 
 - `.gitignore`：忽略密钥配置、虚拟环境、依赖目录、缓存、构建产物与 QA 截图；没有删除这些目录中的用户内容。
@@ -50,7 +52,7 @@ backend/app/
 │   └── routes.py               # 元数据、任务、SSE 路由
 ├── core/
 │   ├── config.py               # 环境配置；API Key 不参与 repr
-│   └── events.py               # 每任务 EventLog 与 SSE 编码/回放
+│   └── events.py               # 每任务 EventLog 与 SSE 回放/订阅
 ├── models/
 │   ├── task.py                 # TaskCreate / Task / TaskStatus / TaskError
 │   └── event.py                # AgentEvent 与终态事件定义
