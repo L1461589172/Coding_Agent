@@ -1,12 +1,12 @@
 # Coding Agent 项目结构与功能设计文档
 
-> 版本：v2.3（同步 M1 六个本地工具完成状态）
+> 版本：v2.4（源码状态复核、历史口径统一与 D001 复验问题）
 >
 > 修订日期：2026-08-27
 >
 > 目标：在 2026-09-02 24:00 前交付一个能够完成真实编程任务、过程可解释、核心 Agent 逻辑自行实现的本地 MVP。
 
-> 阅读说明：功能设计章节描述目标；第 9 节和第 13 节描述当前代码。文件已存在或接口已定义，不代表对应 Agent 能力已经实现。
+> 阅读说明：以本地源码提交 `39697d6` 核对。目标架构不等于当前行为；第 9/13 节描述实际代码。M1 六工具功能已实现，但本次测试为 171 passed / 1 failed，D001 稳定性问题待修复。文档索引和验证口径见 [docs/README](README.md)。
 
 ## 1. 结论与修订摘要
 
@@ -21,16 +21,16 @@
 
 ## 2. 项目要求追踪
 
-| 项目要求 | 设计响应 | 验收证据 |
+| 项目要求 | 设计响应 | 当前证据与缺口 |
 |---|---|---|
-| 个人独立设计并实现 coding agent | 自研 Agent Loop、工具注册与执行、上下文、终止和错误处理 | 源码、提交历史、设计说明 |
-| 自主读取/写入文件、执行命令 | 六个本地工具直接访问用户授权的 Workspace | Timeline、真实文件变化、命令输出 |
-| 禁止现成 Agent 框架/SDK | 仅使用 FastAPI/Vue/httpx 等通用库和模型原生 tool calling | 依赖清单、LLM 客户端源码 |
-| 不依赖托管代码执行/文件工具 | 文件与 Shell 工具均在本地 Runtime 实现 | 工具源码与现场演示 |
-| 自行实现关键逻辑 | Conversation、Context、Tool Dispatch、Stop、Recovery 均在仓库内 | 模块与单元测试 |
-| API Key 不入库 | 仅从环境变量读取，提供无密钥的 `.env.example` | Git 搜索与配置代码 |
-| 提交 Git 仓库、README.txt、视频 | 计划中设置单独交付检查点 | 最终压缩包和公开仓库 |
-| 面试能解释设计决策 | 事件日志与模块边界对应 Agent 每一步决策 | 设计文档、演示脚本 |
+| 个人独立设计并实现 coding agent | 自研 Loop、工具、上下文与停止策略 | 本地工具和独立组件已有；真实 Loop 未实现 |
+| 自主读取/写入文件、执行命令 | 六个本地工具供 Runtime 调度 | 独立工具可执行；模型自主调用与 Timeline 工具事件未接入 |
+| 禁止现成 Agent 框架/SDK | 使用通用 Web/HTTP 库和原生 tool calling | 依赖中未引入 Agent 框架；LLMClient 目前只有协议 |
+| 不依赖托管代码执行/文件工具 | 工具在本地 Workspace/进程执行 | tools 源码与真实工具测试已有；不是 OS 沙箱 |
+| 自行实现关键逻辑 | 本地管理 Conversation、Tool Dispatch、Stop、Recovery | 轮次配对、分发和独立 Stop 已实现；总预算/Recovery/循环未实现 |
+| API Key 不入库 | 环境变量读取、公开配置白名单 | Settings repr 隐藏密钥、通用错误不透出；完整历史/材料密钥扫描仍需交付前执行 |
+| 提交 Git 仓库、README.txt、视频 | 独立交付检查点 | 已有本地提交；最终 README.txt、视频、压缩包未生成，未核对远程公开状态 |
+| 面试能解释设计决策 | 模块与事件对应实际步骤 | 架构/工具说明已有；真实模型决策链路仍待实现和演示 |
 
 ## 3. MVP 目标与非目标
 
@@ -48,12 +48,14 @@
 ### 3.2 P1：P0 稳定后再做
 
 - Workspace 文件树和文件查看。
-- 统一 Diff 展示及文件修改统计。
+- 高级交互式 Diff Viewer；工具返回的文本 Diff 已在 M1 实现，基础文件变化卡片仍属于 M3。
 - 自动发现 `pytest`、`npm test` 等验证命令。
-- 更严格的上下文裁剪和摘要。
+- 更精细的上下文选择和摘要；基本字符/token 总预算仍是 M2 的 P0 待办。
 - 构建 Vue 静态资源并由 FastAPI 单端口托管。
 
 ## 4. 运行模式
+
+下图是目标调用关系；当前默认 Runtime 不调用 Conversation、LLMClient、StopController 或 Registry.execute。实际页面链路见第 9.4 节。
 
 ```text
 Browser / Vue 3
@@ -136,25 +138,25 @@ Conversation 保存本任务的完整逻辑消息：system、user、assistant、
 
 ### 5.6 ToolRegistry
 
-统一维护工具名称、JSON Schema 与执行函数。调用前必须：
+当前 ToolRegistry 维护名称、Schema、handler，执行严格参数校验并返回工具结果，不发布事件，也不统一统计所有工具的耗时。M2 接入时的目标流程是：
 
 1. 检查工具是否注册。
 2. 校验参数类型和必填项。
-3. 发布 `tool_started`。
+3. 由 Runtime/调度层发布 `tool_started`。
 4. 执行并捕获错误。
-5. 截断过大输出。
-6. 发布 `tool_finished`；修改文件时追加 `file_changed`。
+5. 各工具已有读取/输出预算；Runtime 再控制整体上下文与事件体积。
+6. Runtime/调度层发布 `tool_finished`，成功变更时追加 `file_changed`，命令执行追加 `command_finished`；这些事件目前尚未接入。
 
 六个 P0 工具：
 
 | 工具 | 主要参数 | 行为 |
 |---|---|---|
-| `list_files` | `path`、`max_entries` | 返回目录树，忽略 `.git`、`node_modules` 等目录 |
+| `list_files` | `path`、`max_entries` | 递归返回路径/类型的扁平列表，忽略 `.git`、`node_modules` 等目录 |
 | `read_file` | `path`、`start_line`、`end_line` | 按行读取 UTF-8 文本并限制输出 |
 | `search_text` | `query`、`path`、`max_results` | 在文本文件中搜索并返回文件、行号、片段 |
 | `write_file` | `path`、`content` | 创建或整体写入文件并返回 diff 摘要 |
-| `replace_in_file` | `path`、`old_text`、`new_text` | 默认要求旧文本唯一匹配，避免误改 |
-| `run_command` | `command`、`timeout_seconds` | 在 Workspace 为 cwd 的本地子进程中执行 |
+| `replace_in_file` | `path`、`old_text`、`new_text` | 必须唯一匹配，重叠匹配也计入多处；不提供强制全局替换选项 |
+| `run_command` | `command`、`timeout_seconds` | 在 Workspace 根目录执行白名单 argv；不解释 Shell 运算符 |
 
 ### 5.7 StopController
 
@@ -174,7 +176,7 @@ Conversation 保存本任务的完整逻辑消息：system、user、assistant、
 
 ```json
 {
-  "id": "event-id",
+  "id": "1",
   "task_id": "task-id",
   "type": "tool_finished",
   "timestamp": "2026-08-27T12:00:00Z",
@@ -185,6 +187,8 @@ Conversation 保存本任务的完整逻辑消息：system、user、assistant、
 
 事件类型：`task_started`、`assistant_message`、`tool_started`、`tool_finished`、`file_changed`、`command_finished`、`task_completed`、`task_failed`。
 
+示例用于展示信封，不表示当前默认 Runtime 已发出 tool_finished。id 为任务内递增数字字符串；现阶段默认链路只发出 task_started、assistant_message、task_failed，step 默认为 0。
+
 事件先写入该任务的内存历史，再通知 SSE 订阅者。浏览器断线重连时可先收到历史事件，避免演示时丢步骤。
 
 ### 6.2 REST/SSE 接口
@@ -194,9 +198,12 @@ Conversation 保存本任务的完整逻辑消息：system、user、assistant、
 | `POST` | `/api/tasks` | 创建并异步启动任务 |
 | `GET` | `/api/tasks/{task_id}` | 查询任务状态与最终结果 |
 | `GET` | `/api/tasks/{task_id}/events` | SSE 事件流，先回放后订阅 |
-| `GET` | `/api/workspace/tree` | P1：查询目录树 |
-| `GET` | `/api/workspace/file?path=...` | P1：读取供 UI 展示的文件 |
+| `GET` | `/api/meta` | 已实现：工作区名称、六工具名称/可用状态、scaffold 模式 |
+| `GET` | `/api/workspace/tree` | P1 规划，尚无路由，当前 404 |
+| `GET` | `/api/workspace/file?path=...` | P1 规划，尚无路由，当前 404 |
 | `GET` | `/health` | 健康检查 |
+
+没有 `/api/tools/execute` 或任务取消/重试/历史列表接口。SSE 使用 `Last-Event-ID`（优先）或 `after`；范围外游标返回 400，终态已读完返回 204。当前前端走 REST/SSE，不直接调用 Python 工具。
 
 ## 7. 安全边界与已知限制
 
@@ -206,21 +213,23 @@ Conversation 保存本任务的完整逻辑消息：system、user、assistant、
 - 拼接 Workspace 后执行规范化/真实路径解析，再确认结果仍位于根目录内。
 - 新文件先校验其最近存在父目录的真实路径，避免符号链接逃逸。
 - 默认忽略或拒绝 `.git`、`.env`、密钥文件和依赖缓存目录。
-- 所有写操作记录目标路径、前后 diff 摘要和结果。
+- 成功写入返回目标路径、Diff、哈希和结果；失败返回结构化错误。没有持久化审计日志，也尚未发布 file_changed 事件。
 
 ### 7.2 Shell 边界
 
-`cwd=workspace` 不是安全沙箱。MVP 通过命令超时、输出限制、危险命令模式拒绝和前端可见日志降低风险，但无法阻止一个获准进程主动访问 Workspace 外文件。演示只在专用样例 Workspace 内运行，不以管理员权限启动。
+`cwd=workspace` 不是安全沙箱。当前通过命令超时、输出限制和 argv 白名单降低风险，但无法阻止一个获准进程主动访问 Workspace 外文件。真实工具执行日志接入前端属于 M2/M3 待办，尚不能依赖网页观察工具执行。演示只在专用样例 Workspace 内运行，不以管理员权限启动。
 
 M1 已实现 argv 白名单、精简环境、超时、输出预算，以及 Windows Job Object / POSIX 进程组清理。Job Object 在此仅管理进程生命周期，**不隔离文件或网络**。如果未来需要把“只能访问 Workspace”升级为强保证，必须另行设计容器、受限账户或 Windows Sandbox 等 OS 级隔离；这不属于本次 P0。
 
 ### 7.3 Prompt Injection 与凭据
 
-仓库文件和命令输出都视为不可信数据。System Prompt 明确禁止把文件中的指令当作系统指令；日志层对 API Key 做脱敏；工具结果不返回进程环境变量。
+目标要求：仓库文件和命令输出作为不可信数据，不得升级为系统指令；Runtime/System Prompt 和展示/日志层需处理注入与凭据泄漏风险。
+
+当前仅有 Settings repr 隐藏密钥、公开元数据白名单、通用异常文案和命令环境裁剪。**尚无真实 System Prompt、内容级脱敏管道或日志脱敏实现**。工具不会主动附带整个环境字典，但获准脚本仍可能把环境或自行读取的凭据打印到 stdout/stderr；普通源码/Diff 也可能包含敏感内容。
 
 ## 8. 前端 MVP
 
-单页界面包含：
+目标单页界面包含：
 
 - Task 输入框与 Run 按钮。
 - 当前 Workspace 名称和任务状态。
@@ -243,7 +252,7 @@ M1 已实现 argv 白名单、精简环境、超时、输出预算，以及 Wind
 - **待实现**：尚未编写的行为，或已有逻辑尚未接入 Runtime；不等于要求现在新增一个文件。
 - 表格中的“无本阶段新增项”仅表示该辅助文件已满足当前职责，不表示整个模块或项目完成。
 
-当前完整可观察链路是“创建任务 -> 框架说明 -> `FAILED / NOT_IMPLEMENTED`”。真实 LLM 决策、文件修改、命令执行和自动验证仍待完成。
+当前网页完整可观察链路是“创建任务 -> 框架说明 -> `FAILED / NOT_IMPLEMENTED`”。独立工具已经能真实读写和执行命令；尚未完成的是 LLM 自主决策、循环调度、事件回填与页面端到端展示。无模型修复流程存在 D001 字节码缓存复用问题。
 
 M1 六个工具已可独立通过注册表调用；默认页面任务未接入它们。只读语义见 [只读阶段说明](Coding%20Agent%20M1%20只读工具实现说明.md)，写入、命令与最新验证见 [M1 工具系统完成说明](Coding%20Agent%20M1%20工具系统完成说明.md)。
 
@@ -362,7 +371,7 @@ backend/app/
 | [tools/writes.py](../backend/app/tools/writes.py) | 文本变更基础设施 | 有界快照、写前冲突检查、同目录临时文件/fsync、原子替换/无覆盖创建、失败清理；BOM 保留、前后 SHA-256、受限单段统一 Diff | 不是跨进程 compare-and-swap；不保留所有 ACL/扩展属性，不提供回滚历史或多文件事务 |
 | [tools/search.py](../backend/app/tools/search.py) | 文本搜索工具 | 文件/目录范围内区分大小写的字面搜索；路径、行列号、片段；文件数/字节/输出上限与跳过统计，线程中执行 | Runtime 接入；正则表达式、非 UTF-8 编码和索引不在当前实现范围 |
 | [tools/shell.py](../backend/app/tools/shell.py) | 本地命令工具 | CommandLimits、固定 cwd、双线程有界捕获 stdout/stderr、退出状态、超时/输出预算/取消、正常退出后的子进程清理 | Runtime 与 command_finished 事件接入；没有交互终端、后台服务或流式 UI |
-| [tools/command_policy.py](../backend/app/tools/command_policy.py) | 命令策略 | 解析受限 argv，允许 Python/pytest、Node 工作区脚本、npm 本地脚本和 echo；拒绝 Shell 运算符和任意程序；可信 PATH 定位、环境白名单及固定 ComSpec | 不分析脚本内容或插件行为；不能限制获准程序的文件/网络访问 |
+| [tools/command_policy.py](../backend/app/tools/command_policy.py) | 命令策略 | 解析受限 argv，允许 Python/pytest、Node 工作区脚本、npm 本地脚本和 echo；拒绝 Shell 运算符和任意程序；可信 PATH 定位、环境白名单及固定 ComSpec | D001 的命令级缓存策略待明确；不分析脚本内容或插件行为，不能限制获准程序的文件/网络访问 |
 | [tools/command_worker.py](../backend/app/tools/command_worker.py) | 受控启动器 | Python -I 启动，等待父进程许可后才运行目标 argv；stdin 禁用、转发退出状态；目标程序继承 Job/进程组 | 不是独立用户接口，不应从不可信工作区替换本项目的运行时代码 |
 | [tools/windows_job.py](../backend/app/tools/windows_job.py) | Windows 进程树管理 | ctypes 封装 Job 创建、kill-on-close、分配、终止和句柄关闭；未获分配许可不启动用户命令 | 仅管理生命周期，不提供文件/网络沙箱；POSIX 路径由 shell.py 的进程组实现 |
 
@@ -427,7 +436,7 @@ TaskManager / Runtime -> core/events.py（EventLog）
 | `GET /api/tasks/{id}/events` | `api/routes.py`、`core/events.py` | client.watchTask -> App -> Timeline | 已实现回放/实时订阅；默认流程只有启动、说明、失败三个事件 |
 | `GET /api/workspace/tree` | 尚无路由 | 尚无文件树组件 | 待实现（P1），当前返回 404 |
 | `GET /api/workspace/file?path=...` | 尚无路由 | 尚无 Code Viewer | 待实现（P1），当前返回 404 |
-| Tool/Shell/File Change 专用结果 | 仅在 models/event.py 定义事件名称 | Timeline 能展示通用 JSON | 实际事件产生和专用展示待实现，不是已完成的工具功能 |
+| Tool/Shell/File Change 专用事件 | 工具结果已实现；models/event.py 定义事件名称，Runtime 尚未发布 | Timeline 能展示通用 JSON | 工具层能力已存在，事件接入和专用展示待实现 |
 
 `GET /` 的后端响应只是启动说明；`frontend/dist/` 即使已经构建，也不会自动由 FastAPI 托管。页面重连保留的是当前页面内的 task_id/事件游标，整页刷新后的任务恢复尚未实现。
 
@@ -444,7 +453,7 @@ TaskManager / Runtime -> core/events.py（EventLog）
 | [tests/test_workspace.py](../tests/test_workspace.py) | 相对路径、越界、敏感路径、Windows 别名、符号链接/junction/硬链接、根目录替换测试 | 持续补充文件系统边界与跨平台验收 |
 | [tests/test_read_only_tools.py](../tests/test_read_only_tools.py) | 三个工具真实读取、过滤、UTF-8/CRLF、预算/截断、错误码、线程执行、工作区隔离及不修改内容 | 真实 Agent Loop 端到端测试不在此文件范围 |
 | [tests/test_write_tools.py](../tests/test_write_tools.py) | 创建/覆盖/不变、BOM/CRLF、唯一与重叠匹配、路径守卫、大小/Diff 限制、失败清理与并发变更检查 | 跨平台文件系统/ACL 与恶意并发环境仍需独立验收 |
-| [tests/test_shell_tools.py](../tests/test_shell_tools.py) | 白名单、环境裁剪、双流输出、超时/取消、子进程清理、Job 分配失败、Node/npm 及无模型修复流程 | POSIX 实机验收、Runtime 与模型端到端测试 |
+| [tests/test_shell_tools.py](../tests/test_shell_tools.py) | 白名单、环境裁剪、双流输出、超时/取消、子进程清理、Job 分配失败、Node/npm 及无模型修复流程 | 本次无模型流程复验失败，需补 D001 确定性回归；POSIX 实机验收、Runtime 与模型端到端测试 |
 | [tests/test_agent_contracts.py](../tests/test_agent_contracts.py) | 配置、Context 配对、Stop 独立策略、工具 Schema 与实际分发 | 真实 LLM 适配、工具执行、预算/终止的完整 Loop 测试 |
 | [tests/test_events.py](../tests/test_events.py) | 实时订阅/历史回放、心跳、读者断开、终态禁止追加 | 大载荷、多订阅者和历史体积限制测试 |
 | [tests/test_task_manager.py](../tests/test_task_manager.py) | 创建后立即关闭、注入测试 Runner 的成功分支 | 默认真实 Runtime 完成任务的测试 |
@@ -458,7 +467,7 @@ TaskManager / Runtime -> core/events.py（EventLog）
 
 | 阶段 | 前端待实现 | 后端待实现 | 主要落点 |
 |---|---|---|---|
-| M1：本地工具（已完成） | 已展示六工具就绪；真实结果卡片属于 M3 | 六工具、Diff、命令超时/输出限制/清理已完成；保留非强沙箱和跨平台未验收边界 | `tools/files.py`、`writes.py`、`shell.py`、`command_policy.py`、`windows_job.py` |
+| M1：功能已实现，复验待修复 | 六工具就绪标签已有；真实结果卡片属于 M3 | 六工具与资源限制已有；优先处理 D001，明确命令缓存策略与稳定回归 | `tools/command_policy.py`、`shell.py`、`writes.py`、`tests/test_shell_tools.py` |
 | M2：Agent 闭环 | 准备接收真实工具事件 | LLM 具体适配、循环、结果回填、上下文预算、Stop 与恢复机制、事件载荷限制 | `agent/llm.py`、`runtime.py`、`context.py`、`stop.py`、`core/events.py` |
 | M3：执行过程展示 | 专用 Tool/Shell/File Change 卡片、统计和连接恢复验收 | 真实中间事件与结构化结果，保持 API/前端类型一致 | `App.vue`、`types.ts`、`api/client.ts`、`components/`；`models/event.py`、`models/task.py` |
 | P1：Workspace / 静态托管 | 文件树、Code Viewer、Diff Viewer | 文件查询 API、前端静态产物托管 | 未来扩展 `components/`、`api/routes.py`、`main.py`；新增文件名尚未确定 |
@@ -478,6 +487,8 @@ TaskManager / Runtime -> core/events.py（EventLog）
 ## 11. 验收标准
 
 ### 11.1 核心单元测试
+
+下面是目标验收清单。前四项已有自动化测试；Loop 级停止和真实 LLM 错误处理尚未实现。当前测试存在 D001，不能据此宣称完整验收通过。
 
 - 路径穿越和符号链接逃逸被拒绝。
 - 文件读取行范围、输出截断正确。
@@ -506,6 +517,8 @@ TaskManager / Runtime -> core/events.py（EventLog）
 
 ## 12. 最终 Demo 路径
 
+以下为规划示例。当前 demo_workspace 只有占位 README，没有 divide 实现、失败测试或真实模型演示记录；单元测试临时创建的样例不是最终 Demo。
+
 ```text
 启动 coding-agent demo_workspace
   -> 页面提交“修复 divide 除零行为并确保测试通过”
@@ -519,7 +532,7 @@ TaskManager / Runtime -> core/events.py（EventLog）
 
 这个范围既满足题目对“编程智能体”的定义，也把时间投入集中在评委会追问的部分：Agent 为什么这样运行、每一步由谁决定、工具如何落地、错误怎样反馈、循环为何会停止。
 
-## 13. 当前实现状态（2026-08-27，M1 工具阶段完成）
+## 13. 当前实现状态（2026-08-27，M1 功能已实现，稳定性复验待修复）
 
 功能设计章节描述目标，不代表全部完成；第 9 节与本节描述当前实现。M0 已创建可启动的后端和前端，以及后续功能的模块接口；真实编程能力仍按实施计划推进。
 
@@ -529,9 +542,11 @@ TaskManager / Runtime -> core/events.py（EventLog）
 - 工具：六种协议均已注册并可执行，绑定工作区；元数据全部标为 ready，但默认 Runtime 不调用它们。
 - 只读边界：UTF-8 普通文件、固定忽略规则、拒绝链接、资源预算及截断元数据已实现；不是并发对抗环境下的强沙箱。
 - LLM：只建立客户端协议与模型返回结构，未实现模型供应商适配器或外部请求。
-- 写入与命令：UTF-8 原子写入、唯一替换、Diff/哈希、精简子进程环境、开发命令白名单、超时/输出预算/进程回收已实现。172 项测试通过；未运行真实模型任务。
+- 写入与命令：UTF-8 原子写入、唯一替换、Diff/哈希、精简环境、命令白名单、超时/输出预算/回收已实现；不代表命令内脚本被沙箱隔离。
+- 最新复验：172 项被收集，实际 171 passed / 1 failed；失败项是无模型修复流程，源码更新后复用旧 pytest 字节码（D001）。此前 172 passed 保留为历史记录，未运行真实模型任务。
 - 上下文与终止：完整轮次裁剪和重复/步数策略有单元测试；尚未接入完整 Loop，也没有 token 预算。命令超时和取消回收已在工具层实现。
 - EventBus 在代码中以每任务 `EventLog` 实现。事件 `id` 是任务内递增数字字符串，用于 `Last-Event-ID` / `after` 续传；终态已读完返回 204。
 - TaskManager 保留至多 100 个内存任务，超过上限返回 503。现阶段每个框架任务只有三个小事件；真实工具接入 Runtime 前还必须增加事件载荷/历史体积限制。
 - 安全：先实现路径越界与常见敏感路径校验、Host/Origin 限制、配置与异常详情不透出；这些不是强沙箱，也不是完备的敏感内容扫描。
-- 逐文件职责、实现状态和后续落点见第 9 节；环境与运行方式见根目录 README.md；M0 交付验证记录见《Coding Agent 基础框架修改说明》。
+- 源码尚有历史提示文本：cli.py 的帮助说明含 execution disabled，TaskManager 的 NOT_IMPLEMENTED 文案仍提及实现 M1/M2。本轮未修改这些代码；应理解为 Agent 执行未接入，而非六工具仍为空壳。
+- 最新验证、文档导航和独立 pytest 临时/缓存运行方式见 [docs/README](README.md)；D001 证据见 [M1 说明第 7 节](Coding%20Agent%20M1%20工具系统完成说明.md#7-本次文档核对与已知问题)。前端构建和浏览器验证本次未重跑，历史记录不替代最新验收。

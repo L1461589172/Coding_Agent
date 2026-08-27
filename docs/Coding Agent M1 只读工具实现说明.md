@@ -1,16 +1,18 @@
 # Coding Agent M1 只读工具实现说明
 
-> 本文保留 172 项完整测试之前的只读阶段记录。写入、替换和命令工具现已完成；最新状态与新增能力见 [M1 工具系统完成说明](Coding%20Agent%20M1%20工具系统完成说明.md)。以下“写入/Shell 未完成”等表述仅描述该历史阶段。
+> 2026-08-27 源码核对：第 1、3–7 节作为当前只读工具参考；第 2、8 节保留首次实现/验证记录。当前六工具均已实现，但最新全量复验有 D001，见 [M1 说明](Coding%20Agent%20M1%20工具系统完成说明.md) 和 [文档导航](README.md)。
 
-更新日期：2026-08-27。本轮只完成路径解析、`list_files`、`read_file`、`search_text`；M1 的写入、替换、Diff、Shell 仍未完成。
+首次实现日期：2026-08-27。本文件重点说明路径解析、`list_files`、`read_file`、`search_text`；后续写入、替换、Diff 和命令功能已在 M1 完整说明中记录。
 
 ## 1. 当前可用能力
 
 三个工具可以通过绑定 Workspace 的 `ToolRegistry.execute()` 独立调用。`main.py` 已把相同 Workspace 注入注册表，但默认 Agent Runtime 尚未调用这些工具，因此网页提交任务仍以 `FAILED / NOT_IMPLEMENTED` 结束。
 
-`GET /api/meta` 新增 `tool_statuses`：三个只读工具为 `ready`，另三个为 `not_implemented`。前端显示“只读就绪”，不把它表述为 Agent 已能自动完成任务。本轮没有新增文件查询 API、模型调用或自动执行任务。
+当前 `GET /api/meta` 的六个 `tool_statuses` 均为 `ready`，前端显示“工具就绪”；`agent_ready` 仍为 false。首次只读阶段才是“三个 ready、三个 not_implemented”，不能沿用为当前 API 预期。当前没有文件查询/工具执行 HTTP API，也没有模型调用或自动执行任务。
 
-## 2. 修改文件
+## 2. 首次只读实现的修改文件（历史）
+
+本表只记录首次只读阶段的变更，“写入未实现/关闭”属于当时状态；当前逐文件职责见设计文档第 9 节。
 
 | 文件 | 修改内容 |
 |---|---|
@@ -39,13 +41,14 @@ README、实施计划和设计文档第 9/13 节已同步。M0 修改说明作�
 - 拒绝符号链接、junction 及其他 reparse point，**即使链接指向工作区内部**；普通文件的硬链接也拒绝。此策略可能排除 OneDrive 等工具创建的 reparse 文件。
 - 忽略/拒绝固定的敏感、版本控制、依赖与构建路径，例如 `.git`、`.env`/`.env.*`、`.ssh`、`.aws`、`.npmrc`、私钥后缀、`node_modules`、`.venv`、`dist`、`build`。完整规则以 Workspace.BLOCKED 与 `_check_parts()` 为准；`.env.example` 也被规则排除。
 - 目前不解析项目 `.gitignore`，也不对任意文本内容进行凭据识别；普通源码中若含密钥，仍可能被读取。
+- 当前还会排除 `.coding-agent-write-` 前缀的内部写入临时文件；写入工具也使用相同路径规则。
 - 显式请求被禁止的路径会返回 `PATH_NOT_ALLOWED`；遍历发现时跳过并计数，不返回该条目的内容。
 
 路径命名规则参考 [Windows 文件/路径命名约束](https://learn.microsoft.com/en-us/windows/win32/fileio/naming-a-file)，链接和文件类型判断使用 [Python stat 信息](https://docs.python.org/3/library/stat.html)。读取前后检查文件身份，但它不是 OS 级安全沙箱，不能消除父目录被恶意并发替换等所有竞争条件。
 
 ## 4. 工具行为与输出
 
-所有调用返回统一 `ToolResult`：`ok`、`output`、`error_code`、`error_message`、`truncated`。失败信息不包含原始 OSError/绝对路径。
+所有调用返回统一 `ToolResult`：`ok`、`output`、`error_code`、`error_message`、`truncated`。参数采用严格类型且禁止额外字段；底层 OSError 不原样回显。文件正文仍是原始不可信内容，可能含路径或凭据，当前不做内容级脱敏。
 
 ### list_files
 
@@ -107,7 +110,7 @@ README、实施计划和设计文档第 9/13 节已同步。M0 修改说明作�
 
 这些值由注册表构造时注入，不接受模型调用随意提高。检查文件是否在 stat 后增长时，最多额外读取 1 字节作为超限探测；总读取预算可能因此多出这个探测字节。过大文件在 stat 阶段即可跳过，不消耗正文读取预算。
 
-扫描/读取经 `asyncio.to_thread` 执行，避免阻塞事件循环。协作式时间预算不是强制中断：无法中断操作系统正在阻塞的文件 I/O，也不等同于未来 Shell 的进程超时。
+扫描/读取经 `asyncio.to_thread` 执行，避免阻塞事件循环。协作式时间预算不是强制中断：无法中断操作系统正在阻塞的文件 I/O，也不等同于现有命令工具的进程超时。read_file 只有大小/返回量限制，没有单独的时间上限。
 
 ## 6. 错误码
 
@@ -120,7 +123,8 @@ README、实施计划和设计文档第 9/13 节已同步。M0 修改说明作�
 | FILE_TOO_LARGE | 超过单文件读取限制 |
 | BINARY_FILE / UNSUPPORTED_ENCODING | 不是受支持的 UTF-8 文本 |
 | UNKNOWN_TOOL / TOOL_ERROR | 工具未注册或其他非预期工具错误 |
-| NOT_IMPLEMENTED | 写入、替换、Shell 尚未实现 |
+
+`NOT_IMPLEMENTED` 当前是默认 Agent 任务的错误，不是这六个工具 handler 的返回状态。写入与命令错误码见 M1 完整说明。
 
 ## 7. 独立调用示例
 
@@ -149,7 +153,9 @@ asyncio.run(main())
 
 `create_registry()` 不再允许无参数调用；调用方必须显式传入 Workspace。这避免独立测试或未来 Runtime 意外把进程当前目录当作授权目录。
 
-## 8. 本轮验证
+## 8. 首次只读阶段验证与当前复验
+
+以下是首次只读阶段的历史记录，不代表当前全量测试数量或本次结果：
 
 - 后端：`python -m pytest -q`，**104 passed**；包括真实 Windows junction、符号链接、硬链接、工作区隔离、打开期间替换、UTF-8/BOM/CRLF、只读内容不变与预算边界。
 - Ruff：lint 和格式检查通过。
@@ -157,4 +163,4 @@ asyncio.run(main())
 - 保留一条已有的 Starlette TestClient/httpx 弃用提示，不影响测试结果；本轮没有变更依赖。
 - 仅在当前 Windows/Python 3.12 环境验证。没有声称完成真实 Agent 任务、Shell 超时、所有文件系统竞争场景或跨平台验收。
 
-下一步按 M1 实施计划继续文件写入、唯一替换和 Diff，再实现 Shell 及其超时/清理；本轮不自动推进这些功能。
+当前补充：写入/替换/Shell 已实现；本次全量收集 172 项，运行结果为 171 passed / 1 failed，失败位于命令工具的重复 pytest 流程而非只读工具测试。D001 及最新复验方式见 [M1 已知问题](Coding%20Agent%20M1%20工具系统完成说明.md#7-本次文档核对与已知问题)，不再把已完成的写入/Shell 列为下一步实现项。
