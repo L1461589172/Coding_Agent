@@ -4,8 +4,10 @@ from pydantic import ValidationError
 
 from app.tools.base import ToolResult, ToolSpec
 from app.tools.files import file_specs
+from app.tools.read_only import ReadError, ReadLimits
 from app.tools.search import search_spec
 from app.tools.shell import shell_spec
+from app.tools.workspace import Workspace, WorkspaceError
 
 
 class ToolRegistry:
@@ -16,6 +18,12 @@ class ToolRegistry:
 
     def schemas(self) -> list[dict[str, Any]]:
         return [spec.schema() for spec in self._specs.values()]
+
+    def availability(self) -> dict[str, str]:
+        return {
+            spec.name: "ready" if spec.implemented else "not_implemented"
+            for spec in self._specs.values()
+        }
 
     async def execute(self, name: str, arguments: dict[str, Any]) -> ToolResult:
         spec = self._specs.get(name)
@@ -32,6 +40,26 @@ class ToolRegistry:
             )
         try:
             return await spec.handler(parsed)
+        except (WorkspaceError, ReadError) as exc:
+            return ToolResult(ok=False, error_code=exc.code, error_message=str(exc))
+        except FileNotFoundError:
+            return ToolResult(ok=False, error_code="NOT_FOUND", error_message="Path does not exist")
+        except NotADirectoryError:
+            return ToolResult(
+                ok=False, error_code="NOT_DIRECTORY", error_message="Expected directory"
+            )
+        except IsADirectoryError:
+            return ToolResult(
+                ok=False, error_code="NOT_FILE", error_message="Expected regular file"
+            )
+        except PermissionError:
+            return ToolResult(
+                ok=False, error_code="PERMISSION_DENIED", error_message="Access denied"
+            )
+        except OSError:
+            return ToolResult(
+                ok=False, error_code="IO_ERROR", error_message="Filesystem operation failed"
+            )
         except Exception:
             return ToolResult(
                 ok=False,
@@ -40,5 +68,8 @@ class ToolRegistry:
             )
 
 
-def create_registry() -> ToolRegistry:
-    return ToolRegistry([*file_specs(), search_spec(), shell_spec()])
+def create_registry(workspace: Workspace, limits: ReadLimits | None = None) -> ToolRegistry:
+    policy = limits or ReadLimits()
+    return ToolRegistry(
+        [*file_specs(workspace, policy), search_spec(workspace, policy), shell_spec()]
+    )

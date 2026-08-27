@@ -2,7 +2,7 @@
 
 本地自主编程智能体的基础框架：Vue 3 + TypeScript + FastAPI。核心 Agent 将自行实现，不使用 Agent 框架/SDK 或托管代码执行工具。
 
-> 当前处于 M0：可启动、可创建任务、可通过 SSE 观察事件；**尚不具备真实编程能力**。默认任务最终返回 `FAILED / NOT_IMPLEMENTED`，不调用模型、不读写项目文件、不执行 Shell。不要将此链路检查当作 Agent 完成任务的演示。
+> 当前已完成 M1 的路径解析与三个只读工具：`list_files`、`read_file`、`search_text` 可通过工具注册表调用。**尚不具备自主编程能力**：默认页面任务仍返回 `FAILED / NOT_IMPLEMENTED`，不调用模型或工具。写入、Shell 和完整 Agent Loop 尚未实现。
 
 ## 环境要求
 
@@ -239,7 +239,7 @@ backend/app/
   core/         # Settings 与 EventLog
   models/       # Task、Event 模型
   services/     # 单活动任务管理与生命周期
-  tools/        # Workspace 校验、六个工具协议与关闭的执行入口
+   tools/        # Workspace 守卫、三个只读工具；写入与 Shell 仍关闭
   cli.py        # coding-agent 命令
   main.py       # FastAPI 应用工厂
 frontend/src/   # Vue 任务输入、状态、时间线和 API 客户端
@@ -253,8 +253,8 @@ docs/           # 设计、实施计划与修改说明
 
 - 内存状态、最多 100 个任务；达到上限返回 503，重启服务会清空历史。
 - TaskManager 仅适用于单进程、单 event loop；不要使用多 worker 部署。
-- Workspace 只做路径级校验，不是 OS 沙箱；尚未处理文件竞争条件、完整 Windows 路径别名策略。
-- 六个工具只有参数校验和注册协议，均返回 `NOT_IMPLEMENTED`。
+- Workspace 已拒绝越界、常见敏感路径、链接/reparse point、硬链接及 Windows 设备/短名称等歧义路径，但不是 OS 沙箱，不能消除所有并发文件系统竞争。
+- `list_files`、`read_file`、`search_text` 已实现；`write_file`、`replace_in_file`、`run_command` 仍返回 `NOT_IMPLEMENTED`。
 - LLM 客户端只有协议；没有 HTTP 请求、模型响应解析和完整 Agent Loop。
 - Context 按完整交互轮次保留最近记录；字符/token 预算、输出截断和摘要待实现。
 - StopController 是可单测的策略，还未接入 Runtime；Shell 超时和进程树清理待实现。
@@ -263,6 +263,7 @@ docs/           # 设计、实施计划与修改说明
 
 ## 项目文档
 
+- [M1 只读工具说明](docs/Coding%20Agent%20M1%20只读工具实现说明.md)：调用方法、输出字段、路径策略、资源限制和验证结果。
 - [项目结构与功能设计](docs/Coding%20Agent%20项目结构与功能设计文档.md)：第 9 节包含前后端逐文件职责、已实现/待实现部分、调用关系与测试文件对照。
 - [实施计划](docs/Coding%20Agent%20实施计划.md)
 - [基础框架修改说明](docs/Coding%20Agent%20基础框架修改说明.md)

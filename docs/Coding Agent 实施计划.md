@@ -3,7 +3,7 @@
 > 计划周期：2026-08-27 至 2026-09-02  
 > 交付目标：先完成可重复的端到端 Agent 闭环，再补展示与提交材料。任何 P1 功能不得阻塞 P0。
 
-> 2026-08-27 框架进度：M0 目录、配置、安装和基础验证已完成；任务 API、SSE、Vue 页面可联调。真实 LLM、六个工具执行和完整 Agent Loop 尚未实现。详见《Coding Agent 基础框架修改说明》。
+> 2026-08-27 进度：M0 已完成基础框架；M1 的路径解析、`list_files`、`read_file`、`search_text` 已实现并可独立调用。写入、Shell、真实 LLM 和完整 Agent Loop 尚未实现。详见《Coding Agent M1 只读工具实现说明》。
 
 ## 1. 里程碑
 
@@ -29,13 +29,14 @@
 
 ### M1：工具系统（08-28）
 
-当前基础：Workspace 路径校验与六个工具的参数/返回协议已创建。执行入口仍关闭，以下项不得因骨架存在而判定完成。
+当前基础：三个只读工具已绑定到指定 Workspace，可经 ToolRegistry.execute 调用；默认 Agent 尚未接入工具。写入和 Shell 保持关闭，因此 M1 整体仍未完成。
 
-- [ ] 完成 Workspace 路径解析与敏感路径拒绝。
-- [ ] 完成 `list_files`、`read_file`、`search_text`。
+- [x] 完成 Workspace 路径解析与敏感路径拒绝（保守拒绝所有链接/reparse point，不等于强沙箱）。
+- [x] 完成 `list_files`、`read_file`、`search_text`（UTF-8、字面匹配、扫描/读取/输出上限）。
+- [x] 覆盖只读工具、路径别名、符号链接、Windows junction、硬链接、截断与错误结果的测试。
 - [ ] 完成 `write_file`、`replace_in_file` 和统一 diff。
 - [ ] 完成 `run_command`、超时、输出截断和危险命令检查。
-- [ ] 覆盖路径穿越、唯一替换、命令超时测试。
+- [ ] 补齐写入唯一替换、命令超时及进程清理测试（路径穿越已覆盖）。
 
 退出标准：不经过模型，工具层测试全部通过；任何文件写入都能给出可审计结果。
 

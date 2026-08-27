@@ -29,4 +29,5 @@ export interface Metadata {
   mode: string
   agent_ready: boolean
   tools: string[]
+  tool_statuses: Record<string, 'ready' | 'not_implemented'>
 }

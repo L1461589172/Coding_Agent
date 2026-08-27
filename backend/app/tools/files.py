@@ -1,6 +1,11 @@
-from pydantic import BaseModel, Field
+import asyncio
+import json
+
+from pydantic import BaseModel, Field, model_validator
 
 from app.tools.base import ToolArgs, ToolResult, ToolSpec
+from app.tools.read_only import ReadLimits, WalkState, read_text, walk_entries
+from app.tools.workspace import Workspace
 
 
 class ListFilesArgs(ToolArgs):
@@ -12,6 +17,12 @@ class ReadFileArgs(ToolArgs):
     path: str = Field(min_length=1)
     start_line: int = Field(default=1, ge=1)
     end_line: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def check_range(self) -> "ReadFileArgs":
+        if self.end_line is not None and self.end_line < self.start_line:
+            raise ValueError("end_line must not precede start_line")
+        return self
 
 
 class WriteFileArgs(ToolArgs):
@@ -29,14 +40,110 @@ async def not_implemented(arguments: BaseModel) -> ToolResult:
     return ToolResult(
         ok=False,
         error_code="NOT_IMPLEMENTED",
-        error_message="文件工具仅定义了协议，未读取或修改任何文件。",
+        error_message="文件写入工具尚未实现；没有修改任何文件。",
     )
 
 
-def file_specs() -> list[ToolSpec]:
+class FileTools:
+    def __init__(self, workspace: Workspace, limits: ReadLimits) -> None:
+        self.workspace = workspace
+        self.limits = limits
+
+    async def list_files(self, arguments: BaseModel) -> ToolResult:
+        assert isinstance(arguments, ListFilesArgs)
+        return await asyncio.to_thread(self._list_files, arguments)
+
+    def _list_files(self, args: ListFilesArgs) -> ToolResult:
+        directory = self.workspace.resolve(args.path)
+        state = WalkState()
+        entries = []
+        used_chars = 0
+        for path, kind in walk_entries(self.workspace, directory, self.limits, state):
+            if len(entries) >= args.max_entries:
+                state.reasons.add("max_entries")
+                break
+            row = {"path": self.workspace.relative(path), "type": kind}
+            cost = len(json.dumps(row, ensure_ascii=False)) + 2
+            if used_chars + cost > self.limits.max_output_chars:
+                state.reasons.add("output_limit")
+                break
+            entries.append(row)
+            used_chars += cost
+        return ToolResult(
+            ok=True,
+            truncated=bool(state.reasons),
+            output={
+                "path": self.workspace.relative(directory),
+                "entries": entries,
+                "scanned_entries": state.scanned_entries,
+                "skipped_entries": state.skipped_entries,
+                "truncation_reasons": sorted(state.reasons),
+            },
+        )
+
+    async def read_file(self, arguments: BaseModel) -> ToolResult:
+        assert isinstance(arguments, ReadFileArgs)
+        return await asyncio.to_thread(self._read_file, arguments)
+
+    def _read_file(self, args: ReadFileArgs) -> ToolResult:
+        text, size = read_text(self.workspace, args.path, self.limits)
+        lines = text.splitlines(keepends=True)
+        requested_end = min(args.end_line if args.end_line is not None else len(lines), len(lines))
+        selected_end = min(requested_end, args.start_line + self.limits.max_read_lines - 1)
+        reasons = []
+        if selected_end < requested_end:
+            reasons.append("line_limit")
+        parts: list[str] = []
+        used_chars = 0
+        partial_line = False
+        for line in lines[args.start_line - 1 : selected_end]:
+            remaining = self.limits.max_output_chars - used_chars
+            if remaining == 0:
+                reasons.append("output_limit")
+                break
+            parts.append(line[:remaining])
+            used_chars += len(parts[-1])
+            if len(line) > remaining:
+                reasons.append("output_limit")
+                partial_line = True
+                break
+        end = args.start_line + len(parts) - 1 if parts else None
+        next_line = end + 1 if end is not None and end < len(lines) else None
+        return ToolResult(
+            ok=True,
+            truncated=bool(reasons),
+            output={
+                "path": self.workspace.relative(self.workspace.resolve(args.path)),
+                "content": "".join(parts),
+                "start_line": args.start_line,
+                "end_line": end,
+                "returned_lines": len(parts),
+                "total_lines": len(lines),
+                "file_bytes": size,
+                "next_start_line": next_line,
+                "last_line_truncated": partial_line,
+                "truncation_reasons": reasons,
+            },
+        )
+
+
+def file_specs(workspace: Workspace, limits: ReadLimits) -> list[ToolSpec]:
+    tools = FileTools(workspace, limits)
     return [
-        ToolSpec("list_files", "List workspace entries", ListFilesArgs, not_implemented),
-        ToolSpec("read_file", "Read UTF-8 text lines", ReadFileArgs, not_implemented),
+        ToolSpec(
+            "list_files",
+            "Recursively list allowed workspace entries",
+            ListFilesArgs,
+            tools.list_files,
+            implemented=True,
+        ),
+        ToolSpec(
+            "read_file",
+            "Read bounded UTF-8 text with 1-based inclusive line ranges",
+            ReadFileArgs,
+            tools.read_file,
+            implemented=True,
+        ),
         ToolSpec("write_file", "Create or overwrite a text file", WriteFileArgs, not_implemented),
         ToolSpec(
             "replace_in_file",

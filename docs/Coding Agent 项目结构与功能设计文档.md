@@ -1,6 +1,6 @@
 # Coding Agent 项目结构与功能设计文档
 
-> 版本：v2.1（补充前后端逐文件职责与实际实现状态）
+> 版本：v2.2（同步 M1 路径守卫与三个只读工具实现状态）
 >
 > 修订日期：2026-08-27
 >
@@ -236,7 +236,7 @@ Conversation 保存本任务的完整逻辑消息：system、user、assistant、
 
 ### 9.1 阅读范围与状态口径
 
-本节按 2026-08-27 的实际源码核对，覆盖 `backend/app/` 下全部 25 个 Python 文件，以及前端 8 个源码文件和 5 个入口/工程配置文件。不列入虚拟环境、依赖目录、缓存和生成的构建产物。
+本节按 2026-08-27 的实际源码核对，覆盖 `backend/app/` 下全部 26 个 Python 文件，以及前端 8 个源码文件和 5 个入口/工程配置文件。不列入虚拟环境、依赖目录、缓存和生成的构建产物。
 
 - **已实现**：存在可执行逻辑；是否已接入当前默认链路会另外注明。
 - **接口骨架**：仅有类型、参数 Schema、Protocol 或返回 `NOT_IMPLEMENTED` 的入口，没有对应业务执行能力。
@@ -244,6 +244,8 @@ Conversation 保存本任务的完整逻辑消息：system、user、assistant、
 - 表格中的“无本阶段新增项”仅表示该辅助文件已满足当前职责，不表示整个模块或项目完成。
 
 当前完整可观察链路是“创建任务 -> 框架说明 -> `FAILED / NOT_IMPLEMENTED`”。真实 LLM 决策、文件修改、命令执行和自动验证仍待完成。
+
+M1 的 `list_files`、`read_file`、`search_text` 已可独立通过注册表调用；默认页面任务未接入它们。具体参数与限制见 [M1 只读工具实现说明](Coding%20Agent%20M1%20只读工具实现说明.md)。
 
 ### 9.2 前端结构与逐文件说明
 
@@ -277,8 +279,8 @@ frontend/
 | [tsconfig.json](../frontend/tsconfig.json) | 类型检查配置 | strict、Bundler 模块解析、DOM 类型及 Vue/TS 文件检查范围 | 无本阶段新增项 |
 | [vite.config.ts](../frontend/vite.config.ts) | 开发与预览服务配置 | Vue 插件、固定 5173 端口、`/api` 和 `/health` 代理；支持 `CODING_AGENT_BACKEND_URL` | 前后端单端口交付需后端静态托管配合；当前构建预览仍依赖独立后端 |
 | [src/main.ts](../frontend/src/main.ts) | Vue 启动入口 | 引入根组件和样式，创建应用并挂载 | 当前单页不需要路由/全局状态插件；无本阶段新增项 |
-| [src/App.vue](../frontend/src/App.vue) | 工作台与状态编排 | 获取工作区元数据、创建/查询任务、订阅事件、按 ID 去重、终态关闭事件流并查询结果；防重复提交、错误/断线提示、手动重连及卸载清理 | 真实 Tool/Shell/Diff 交互、文件树/代码查看；页面刷新后恢复当前任务尚未实现 |
-| [src/types.ts](../frontend/src/types.ts) | 前后端数据契约 | TaskStatus、Task、EventType、AgentEvent、Metadata；与现有 API 字段对应 | 工具/命令/文件变化的结构化 payload 类型；当前 payload 仍是通用字典，类型声明不是运行时校验 |
+| [src/App.vue](../frontend/src/App.vue) | 工作台与状态编排 | 获取工作区元数据并展示工具可用状态、创建/查询任务、订阅事件、按 ID 去重、终态关闭事件流并查询结果；防重复提交、错误/断线提示、手动重连及卸载清理 | 真实 Tool/Shell/Diff 交互、文件树/代码查看；页面刷新后恢复当前任务尚未实现 |
+| [src/types.ts](../frontend/src/types.ts) | 前后端数据契约 | TaskStatus、Task、EventType、AgentEvent、Metadata（含 tool_statuses）；与现有 API 字段对应 | 工具/命令/文件变化的结构化 payload 类型；当前 payload 仍是通用字典，类型声明不是运行时校验 |
 | [src/style.css](../frontend/src/style.css) | 页面样式 | 暗色布局、状态/事件卡片、按钮与焦点样式；800px 以下切换窄屏布局 | 后续专用工具卡片、终端输出及 Diff 样式；主题切换不在本阶段 |
 | [src/api/client.ts](../frontend/src/api/client.ts) | HTTP 与 SSE 接入 | 元数据/创建/查询请求、10 秒请求超时、HTTP 错误提示；EventSource、游标、基础事件检查与关闭函数 | 完整响应/事件 payload 校验，长期断线与服务重启后的恢复策略；当前没有自动重试创建任务 |
 | [src/components/TaskInput.vue](../frontend/src/components/TaskInput.vue) | 输入组件 | 多行输入、8000 字符上限、去除首尾空白、空内容禁用、向 App 发出提交事件；禁用状态由 App 传入 | 用户取消/重试控件尚未实现；不得将禁用输入理解为后端取消能力 |
@@ -319,8 +321,9 @@ backend/app/
     ├── base.py                   # 工具参数、定义与结果契约
     ├── registry.py               # 工具注册和参数校验分发
     ├── workspace.py              # 路径守卫
-    ├── files.py                  # 四个文件工具骨架
-    ├── search.py                 # 文本搜索工具骨架
+    ├── read_only.py              # 有界遍历、读取和资源策略
+    ├── files.py                  # 列表/读取已实现，两个写入工具仍为骨架
+    ├── search.py                 # UTF-8 字面文本搜索
     └── shell.py                  # 命令执行工具骨架
 ```
 
@@ -347,11 +350,12 @@ backend/app/
 | [agent/llm.py](../backend/app/agent/llm.py) | 模型适配接口 | **接口骨架**：ToolCall、ModelReply 和 LLMClient 的 `complete`/`close` 协议 | 具体 HTTP 客户端、鉴权、响应解析、超时、重试和关闭；没有任何真实模型请求 |
 | [agent/context.py](../backend/app/agent/context.py) | 对话管理 | 保存 system/user 和完整交互轮次；校验调用 ID 与结果配对；深拷贝；默认选择最近 8 轮并保留初始任务 | 接入 Runtime、字符/token 预算、单次结果截断和摘要；不是完整 ContextManager，尚无单独 context_builder.py |
 | [agent/stop.py](../backend/app/agent/stop.py) | 确定性停止规则 | 独立方法检查最大步数；按规范化名称/参数识别连续重复，第三次返回 warn、第四次返回 stop | Runtime 调用这些方法、插入纠偏 Observation、执行终止动作；超时/连续错误限制尚未实现 |
-| [tools/base.py](../backend/app/tools/base.py) | 通用工具契约 | 严格参数模型、禁止额外字段、ToolResult、异步 handler 类型、ToolSpec 与函数 Schema 生成 | 统一结果大小限制和实际截断；`truncated` 字段存在不代表已实现截断逻辑 |
-| [tools/registry.py](../backend/app/tools/registry.py) | 工具注册/分发 | 六工具注册、重复名称拒绝、Schema 输出、参数校验、await handler；转换 UNKNOWN_TOOL/INVALID_ARGUMENTS/TOOL_ERROR，不回显原始异常 | 注册真实 handler、接入 Runtime、工具事件/耗时/输出限制；当前不会自动调用 Workspace.resolve |
-| [tools/workspace.py](../backend/app/tools/workspace.py) | 工作区路径约束 | 根目录存在性检查；拒绝绝对路径、上级遍历、空字节、Windows 驱动器/数据流路径和常见敏感路径；真实路径与符号链接逃逸检查 | 所有真实文件操作接入守卫；处理检查后路径变化等竞争条件；不隔离 Shell 进程 |
-| [tools/files.py](../backend/app/tools/files.py) | 文件工具集合 | **接口骨架**：list_files/read_file/write_file/replace_in_file 的参数、基础大小/数量限制和注册定义；共用占位 handler | 目录遍历、分行读取、编码/文件大小检查、写入、唯一匹配替换及 Diff；当前不访问文件内容 |
-| [tools/search.py](../backend/app/tools/search.py) | 文本搜索工具 | **接口骨架**：query/path/max_results 参数限制、搜索工具注册、未实现结果 | 真正遍历文本、过滤文件、返回路径/行号/片段、控制扫描范围和截断 |
+| [tools/base.py](../backend/app/tools/base.py) | 通用工具契约 | 严格参数模型、ToolResult、异步 handler、ToolSpec/Schema 和 implemented 状态；只读工具已使用 truncated 字段 | 写入/Shell 结果模型和对应输出限制 |
+| [tools/registry.py](../backend/app/tools/registry.py) | 工具注册/分发 | create_registry 必须传入 Workspace；绑定三个真实只读 handler、提供 availability，校验参数并转换路径/读取/I/O 错误，不回显原始 OSError | 写入/Shell handler、Runtime 接入、工具事件与耗时；路径守卫由绑定的只读 helper 执行 |
+| [tools/workspace.py](../backend/app/tools/workspace.py) | 工作区路径约束 | 根目录身份与真实路径检查；拒绝越界、敏感路径、设备名、尾点/空格、短名称、符号链接/junction/reparse point 与硬链接；三个只读工具均已接入 | 未来写入接入；不能消除所有检查后路径变化的竞争，也不隔离进程 |
+| [tools/read_only.py](../backend/app/tools/read_only.py) | 共享只读基础设施 | ReadLimits、WalkState、受限且排序的深度优先遍历、协作式扫描时限、UTF-8/BOM 与普通文件检查、文件大小上限和打开后身份核验 | OS 级强隔离不在当前范围；固定忽略规则尚不解析 .gitignore |
+| [tools/files.py](../backend/app/tools/files.py) | 文件工具集合 | list_files 递归返回路径/类型；read_file 按行读取并限制行数/字符数；返回截断原因，线程中执行；写入工具仍返回 NOT_IMPLEMENTED | write_file、replace_in_file、唯一替换与 Diff，以及 Runtime 调用接入 |
+| [tools/search.py](../backend/app/tools/search.py) | 文本搜索工具 | 文件/目录范围内区分大小写的字面搜索；路径、行列号、片段；文件数/字节/输出上限与跳过统计，线程中执行 | Runtime 接入；正则表达式、非 UTF-8 编码和索引不在当前实现范围 |
 | [tools/shell.py](../backend/app/tools/shell.py) | 本地命令工具 | **接口骨架**：command/timeout_seconds 参数限制与未实现结果 | 子进程创建、cwd、环境变量隔离、命令策略、超时、输出捕获/限制、退出码与进程树清理；当前没有 subprocess 调用 |
 
 #### Python 包标识文件
@@ -366,7 +370,7 @@ backend/app/
 | [models/__init__.py](../backend/app/models/__init__.py) | 数据模型包说明 | 无本阶段新增项 |
 | [services/__init__.py](../backend/app/services/__init__.py) | 应用服务包说明 | 无本阶段新增项 |
 | [agent/__init__.py](../backend/app/agent/__init__.py) | Agent 自研逻辑包说明 | 无本阶段新增项 |
-| [tools/__init__.py](../backend/app/tools/__init__.py) | 工具协议包说明，标记 M0 执行关闭 | 无独立业务实现；工具接入后同步说明 |
+| [tools/__init__.py](../backend/app/tools/__init__.py) | 工具包说明：三个只读工具已实现，写入与命令仍关闭 | 无独立业务实现 |
 
 ### 9.4 当前前后端调用关系
 
@@ -409,7 +413,7 @@ TaskManager / Runtime -> core/events.py（EventLog）
 | 接口/能力 | 后端文件 | 前端使用位置 | 当前状态 |
 |---|---|---|---|
 | `GET /health` | `main.py` | 未由页面自动调用；可手动检查 | 已实现服务健康信息，agent_ready=false |
-| `GET /api/meta` | `api/routes.py` | client.getMetadata -> App 工作区与工具清单 | 已实现，只返回工作区名称与工具名称，不是文件树 |
+| `GET /api/meta` | `api/routes.py` | client.getMetadata -> App 工作区与工具清单 | 已实现工作区/工具名称和 tool_statuses；三个工具展示“只读就绪”，不是文件树或 Agent 已就绪 |
 | `POST /api/tasks` | `api/routes.py`、`services/tasks.py` | TaskInput -> App -> client.createTask | 已实现任务创建，默认运行后返回未实现状态 |
 | `GET /api/tasks/{id}` | `api/routes.py` | client.getTask -> App 状态/最终结果 | 已实现内存查询 |
 | `GET /api/tasks/{id}/events` | `api/routes.py`、`core/events.py` | client.watchTask -> App -> Timeline | 已实现回放/实时订阅；默认流程只有启动、说明、失败三个事件 |
@@ -429,7 +433,8 @@ TaskManager / Runtime -> core/events.py（EventLog）
 | [.gitignore](../.gitignore) | 忽略环境、依赖、缓存、密钥配置和 QA 产物 | 不提供运行时安全隔离 |
 | [tests/conftest.py](../tests/conftest.py) | 临时 Workspace 与隔离的 API 测试客户端 | 后续测试 fixture 扩展 |
 | [tests/test_api.py](../tests/test_api.py) | 请求校验、状态、SSE 回放、Host/Origin、409/503、异常不透出、关闭行为 | 真实工具/API 集成和长期断线恢复验收 |
-| [tests/test_workspace.py](../tests/test_workspace.py) | 相对路径、越界、敏感路径、符号链接逃逸测试 | 真正文件读写时的安全性与跨平台边界 |
+| [tests/test_workspace.py](../tests/test_workspace.py) | 相对路径、越界、敏感路径、Windows 别名、符号链接/junction/硬链接、根目录替换测试 | 后续文件写入的安全性与跨平台验收 |
+| [tests/test_read_only_tools.py](../tests/test_read_only_tools.py) | 三个工具真实读取、过滤、UTF-8/CRLF、预算/截断、错误码、线程执行、工作区隔离及不修改内容 | 真实 Agent Loop 端到端测试不在此文件范围 |
 | [tests/test_agent_contracts.py](../tests/test_agent_contracts.py) | 配置、Context 配对、Stop 独立策略、工具 Schema 与未实现结果 | 真实 LLM 适配、工具执行、预算/终止的完整 Loop 测试 |
 | [tests/test_events.py](../tests/test_events.py) | 实时订阅/历史回放、心跳、读者断开、终态禁止追加 | 大载荷、多订阅者和历史体积限制测试 |
 | [tests/test_task_manager.py](../tests/test_task_manager.py) | 创建后立即关闭、注入测试 Runner 的成功分支 | 默认真实 Runtime 完成任务的测试 |
@@ -442,7 +447,7 @@ TaskManager / Runtime -> core/events.py（EventLog）
 
 | 阶段 | 前端待实现 | 后端待实现 | 主要落点 |
 |---|---|---|---|
-| M1：本地工具 | 暂不扩展展示，先确定结构化输出字段 | 六个工具真实执行、路径校验接入、Diff、Shell 超时/输出限制 | `tools/files.py`、`search.py`、`shell.py`、`workspace.py`、`registry.py` |
+| M1：本地工具 | 已展示只读就绪；后续接入真实工具结果卡片 | 路径守卫及三个只读工具已完成；剩余写入、唯一替换、Diff、Shell 超时/输出限制 | `tools/files.py`、`shell.py`、`workspace.py`、`registry.py` |
 | M2：Agent 闭环 | 准备接收真实工具事件 | LLM 具体适配、循环、结果回填、上下文预算、Stop 与恢复机制、事件载荷限制 | `agent/llm.py`、`runtime.py`、`context.py`、`stop.py`、`core/events.py` |
 | M3：执行过程展示 | 专用 Tool/Shell/File Change 卡片、统计和连接恢复验收 | 真实中间事件与结构化结果，保持 API/前端类型一致 | `App.vue`、`types.ts`、`api/client.ts`、`components/`；`models/event.py`、`models/task.py` |
 | P1：Workspace / 静态托管 | 文件树、Code Viewer、Diff Viewer | 文件查询 API、前端静态产物托管 | 未来扩展 `components/`、`api/routes.py`、`main.py`；新增文件名尚未确定 |
@@ -503,17 +508,18 @@ TaskManager / Runtime -> core/events.py（EventLog）
 
 这个范围既满足题目对“编程智能体”的定义，也把时间投入集中在评委会追问的部分：Agent 为什么这样运行、每一步由谁决定、工具如何落地、错误怎样反馈、循环为何会停止。
 
-## 13. 基础框架实现状态（2026-08-27）
+## 13. 当前实现状态（2026-08-27，M1 只读阶段）
 
 功能设计章节描述目标，不代表全部完成；第 9 节与本节描述当前实现。M0 已创建可启动的后端和前端，以及后续功能的模块接口；真实编程能力仍按实施计划推进。
 
 - 启动：`coding-agent <workspace>` 已可用，固定监听 `127.0.0.1`、单 worker；Vue 独立启动于 5173。
 - API：实现 `/health`、`/api/meta`、创建/查询任务、任务 SSE；文件树和文件读取 API 尚未实现。
 - 状态：默认 Runtime 明确以 `FAILED / NOT_IMPLEMENTED` 结束，不产生伪造的文件修改、命令结果或成功总结。
-- 工具：六种工具的 Schema、参数校验和注册入口已创建，执行函数均关闭，等待 M1 实现。
+- 工具：六种协议均已注册；list_files/read_file/search_text 已实现并绑定工作区；write_file/replace_in_file/run_command 仍关闭。
+- 只读边界：UTF-8 普通文件、固定忽略规则、拒绝链接、资源预算及截断元数据已实现；不是并发对抗环境下的强沙箱。
 - LLM：只建立客户端协议与模型返回结构，未实现模型供应商适配器或外部请求。
 - 上下文与终止：完整轮次裁剪和重复/步数策略有单元测试；尚未接入完整 Loop，也没有 token 预算或命令超时控制。
 - EventBus 在代码中以每任务 `EventLog` 实现。事件 `id` 是任务内递增数字字符串，用于 `Last-Event-ID` / `after` 续传；终态已读完返回 204。
-- TaskManager 保留至多 100 个内存任务，超过上限返回 503。现阶段每个框架任务只有三个小事件；真实工具接入前还必须增加事件载荷/历史体积限制。
+- TaskManager 保留至多 100 个内存任务，超过上限返回 503。现阶段每个框架任务只有三个小事件；真实工具接入 Runtime 前还必须增加事件载荷/历史体积限制。
 - 安全：先实现路径越界与常见敏感路径校验、Host/Origin 限制、配置与异常详情不透出；这些不是强沙箱，也不是完备的敏感内容扫描。
 - 逐文件职责、实现状态和后续落点见第 9 节；环境与运行方式见根目录 README.md；M0 交付验证记录见《Coding Agent 基础框架修改说明》。

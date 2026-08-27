@@ -13,6 +13,14 @@ def test_health_and_metadata_do_not_expose_settings(client):
     meta = client.get("/api/meta").json()
     assert meta["agent_ready"] is False
     assert len(meta["tools"]) == 6
+    assert meta["tool_statuses"] == {
+        "list_files": "ready",
+        "read_file": "ready",
+        "search_text": "ready",
+        "write_file": "not_implemented",
+        "replace_in_file": "not_implemented",
+        "run_command": "not_implemented",
+    }
     assert "fixture-secret" not in json.dumps(meta)
     assert "api_key" not in meta
     assert client.get("/openapi.json").status_code == 200

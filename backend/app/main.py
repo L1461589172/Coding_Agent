@@ -18,7 +18,7 @@ from app.tools.workspace import Workspace
 def create_app(settings: Settings | None = None, runner: TaskRunner | None = None) -> FastAPI:
     config = settings or Settings.from_env()
     workspace = Workspace(config.workspace)
-    tools = create_registry()
+    tools = create_registry(workspace)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:

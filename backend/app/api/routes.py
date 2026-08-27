@@ -19,6 +19,7 @@ async def metadata(request: Request) -> dict:
         "mode": "scaffold",
         "agent_ready": False,
         "tools": [s["function"]["name"] for s in request.app.state.tools.schemas()],
+        "tool_statuses": request.app.state.tools.availability(),
     }
 
 

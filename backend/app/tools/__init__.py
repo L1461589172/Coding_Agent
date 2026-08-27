@@ -1,1 +1,1 @@
-"""Local tool contracts. Execution handlers are deliberately disabled in M0."""
+"""Workspace-bound read-only tools. Writes and command execution remain disabled."""

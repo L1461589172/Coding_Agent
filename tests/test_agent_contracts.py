@@ -5,6 +5,7 @@ from app.agent.context import Conversation
 from app.agent.stop import StopController
 from app.core.config import Settings
 from app.tools.registry import create_registry
+from app.tools.workspace import Workspace
 
 
 def test_config_does_not_repr_secret(tmp_path):
@@ -45,9 +46,9 @@ def test_context_preserves_call_result_pairs():
         conversation.append_round(pair[:1])
 
 
-def test_tool_registry_validation_and_disabled_execution():
+def test_tool_registry_validation_and_disabled_execution(tmp_path):
     async def scenario():
-        registry = create_registry()
+        registry = create_registry(Workspace(tmp_path))
         assert len(registry.schemas()) == 6
         assert (await registry.execute("missing", {})).error_code == "UNKNOWN_TOOL"
         assert (await registry.execute("read_file", {})).error_code == "INVALID_ARGUMENTS"
@@ -61,9 +62,6 @@ def test_tool_registry_validation_and_disabled_execution():
             )
         ).error_code == "INVALID_ARGUMENTS"
         inputs = {
-            "list_files": {},
-            "read_file": {"path": "a.txt"},
-            "search_text": {"query": "hello"},
             "write_file": {"path": "a.txt", "content": "hello"},
             "replace_in_file": {"path": "a.txt", "old_text": "hello", "new_text": "bye"},
             "run_command": {"command": "echo hello"},

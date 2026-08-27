@@ -26,6 +26,7 @@ class ToolSpec:
     description: str
     arguments: type[ToolArgs]
     handler: ToolHandler
+    implemented: bool = False
 
     def schema(self) -> dict[str, Any]:
         return {
