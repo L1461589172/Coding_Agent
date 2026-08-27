@@ -46,7 +46,7 @@ def test_context_preserves_call_result_pairs():
         conversation.append_round(pair[:1])
 
 
-def test_tool_registry_validation_and_disabled_execution(tmp_path):
+def test_tool_registry_validation_and_execution(tmp_path):
     async def scenario():
         registry = create_registry(Workspace(tmp_path))
         assert len(registry.schemas()) == 6
@@ -68,7 +68,8 @@ def test_tool_registry_validation_and_disabled_execution(tmp_path):
         }
         for name, args in inputs.items():
             result = await registry.execute(name, args)
-            assert result.ok is False
-            assert result.error_code == "NOT_IMPLEMENTED"
+            assert result.ok, result
+        assert (tmp_path / "a.txt").read_text() == "bye"
+        assert set(registry.availability().values()) == {"ready"}
 
     asyncio.run(scenario())

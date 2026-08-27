@@ -67,7 +67,7 @@ onBeforeUnmount(() => closeStream?.())
   <div class="app-shell">
     <header class="app-header">
       <div class="brand"><span class="brand-icon" aria-hidden="true">&gt;_</span><div><h1>Coding Agent</h1><p>LOCAL DEVELOPMENT WORKSPACE</p></div></div>
-      <span class="badge">M1 · 只读工具</span>
+      <span class="badge">M1 · 本地工具</span>
     </header>
     <main>
       <aside class="workspace-panel">
@@ -76,8 +76,8 @@ onBeforeUnmount(() => closeStream?.())
         <p class="muted">单用户 / 单工作区 / 单活动任务</p>
         <hr />
         <h2>工具协议</h2>
-        <ul class="tool-list"><li v-for="tool in metadata?.tools ?? []" :key="tool"><code>{{ tool }}</code><span>{{ metadata?.tool_statuses?.[tool] === 'ready' ? '只读就绪' : '待实现' }}</span></li></ul>
-        <p class="muted">三个只读工具已实现，尚未接入 Agent。页面任务仍只检查链路，不读取文件或执行 Shell。</p>
+        <ul class="tool-list"><li v-for="tool in metadata?.tools ?? []" :key="tool"><code>{{ tool }}</code><span>{{ metadata?.tool_statuses?.[tool] === 'ready' ? '工具就绪' : '待实现' }}</span></li></ul>
+        <p class="muted">六个本地工具已实现，尚未接入 Agent。页面任务仍只检查链路，不读取、修改文件或执行命令。</p>
         <button class="secondary" @click="loadMetadata">重新连接后端</button>
       </aside>
       <section class="main-panel" aria-label="任务工作台">

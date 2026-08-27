@@ -2,7 +2,7 @@
 
 本地自主编程智能体的基础框架：Vue 3 + TypeScript + FastAPI。核心 Agent 将自行实现，不使用 Agent 框架/SDK 或托管代码执行工具。
 
-> 当前已完成 M1 的路径解析与三个只读工具：`list_files`、`read_file`、`search_text` 可通过工具注册表调用。**尚不具备自主编程能力**：默认页面任务仍返回 `FAILED / NOT_IMPLEMENTED`，不调用模型或工具。写入、Shell 和完整 Agent Loop 尚未实现。
+> M1 本地工具系统已完成：六个工具均可通过绑定 Workspace 的注册表调用，支持原子写入、唯一替换、Diff、受限命令执行及进程清理。**尚不具备自主编程能力**：默认页面任务仍返回 `FAILED / NOT_IMPLEMENTED`，不调用模型或工具。完整 Agent Loop 属于下一阶段 M2。
 
 ## 环境要求
 
@@ -203,6 +203,23 @@ npm.cmd run preview
 .\.venv\Scripts\python.exe -m pip check
 ```
 
+Windows 下建议使用独立临时目录与缓存的测试脚本，避免 Codex 执行账户和普通用户共用 pytest 目录造成权限错误：
+
+```powershell
+.\scripts\test.ps1
+```
+
+该脚本从任何工作目录调用都可以，会使用仓库 `.venv`；例如在 `backend` 目录中运行 `..\scripts\test.ps1`。若执行策略不允许运行 `.ps1`，无需修改系统策略，直接执行：
+
+```powershell
+$pytestRunDir = Join-Path $env:TEMP ("coding-agent-pytest-" + [guid]::NewGuid().ToString("N"))
+& D:\Coding_Agent\.venv\Scripts\python.exe -m pytest D:\Coding_Agent\tests -q --basetemp "$pytestRunDir" -o "cache_dir=$pytestRunDir-cache"
+```
+
+按实际克隆位置调整上述绝对路径。pytest 会清空 `--basetemp`：必须使用新建的专用随机路径，不能指定项目根目录或已有数据目录。脚本不删除旧测试目录；运行记录保留在系统临时目录，便于检查失败样例。
+
+本轮在 Windows/Python 3.12 下验证 **172 项测试通过**，包含真实子进程、Node/npm 本地脚本、超时/取消/子进程回收，以及“写入失败测试 → 替换 → 测试通过”的无模型流程。可选 Node/npm 或符号链接在不支持的环境会明确 skip；保留已有 Starlette/httpx 弃用提示。
+
 前端目录：
 
 ```powershell
@@ -226,7 +243,9 @@ npm.cmd run build
 | 8000 或 5173 端口已占用 | 检查是否重复启动；停止自己此前启动的服务，或按上文修改后端端口；不要直接结束未知进程 |
 | 通过局域网 IP 访问失败 | 当前仅允许本机访问，请使用 `127.0.0.1` 或 `localhost`，不要改成公网服务 |
 | 修改 `.env` 后没有生效 | 后端不自动加载它；在后端终端设置环境变量并重启 |
-| 任务返回 `NOT_IMPLEMENTED` | 预期行为：LLM 和本地工具执行尚未实现，不是密钥错误 |
+| 任务返回 `NOT_IMPLEMENTED` | 预期行为：六个工具已实现，但默认 Runtime 尚未接入它们和 LLM，不是密钥错误 |
+| pytest 只有 6 项通过，其余在 tmp_path 初始化报权限错误 | 使用 `scripts/test.ps1` 或上面的随机 `--basetemp` / `cache_dir` 命令，避免不同账户共用临时目录与缓存 |
+| run_command 返回 `COMMAND_NOT_ALLOWED` | 只接受文档列出的开发命令；不支持 Shell 运算符、内联代码、安装依赖或任意可执行文件 |
 | 创建任务返回 409 / 503 | 409 表示已有活动任务；503 表示达到 100 个内存任务上限，确认不需保留历史后重启后端 |
 | 依赖下载失败 | 检查网络、代理或包源设置，保持锁文件/约束文件不变；当前没有提供离线依赖包 |
 
@@ -239,12 +258,12 @@ backend/app/
   core/         # Settings 与 EventLog
   models/       # Task、Event 模型
   services/     # 单活动任务管理与生命周期
-   tools/        # Workspace 守卫、三个只读工具；写入与 Shell 仍关闭
+  tools/        # Workspace 守卫、六个工具、原子写入/Diff、命令策略与进程管理
   cli.py        # coding-agent 命令
   main.py       # FastAPI 应用工厂
 frontend/src/   # Vue 任务输入、状态、时间线和 API 客户端
 tests/          # 不使用真实 LLM 的后端测试
-scripts/        # 可选浏览器检查
+scripts/        # 独立临时目录测试脚本、可选浏览器检查
 demo_workspace/ # 演示任务占位目录
 docs/           # 设计、实施计划与修改说明
 ```
@@ -254,15 +273,18 @@ docs/           # 设计、实施计划与修改说明
 - 内存状态、最多 100 个任务；达到上限返回 503，重启服务会清空历史。
 - TaskManager 仅适用于单进程、单 event loop；不要使用多 worker 部署。
 - Workspace 已拒绝越界、常见敏感路径、链接/reparse point、硬链接及 Windows 设备/短名称等歧义路径，但不是 OS 沙箱，不能消除所有并发文件系统竞争。
-- `list_files`、`read_file`、`search_text` 已实现；`write_file`、`replace_in_file`、`run_command` 仍返回 `NOT_IMPLEMENTED`。
+- 六个工具均已实现，可独立调用；写入只接受受限大小的 UTF-8 普通文件，替换必须唯一匹配。详细参数、错误码和示例见 M1 完成说明。
+- `run_command` 接受 Python/pytest、Node 工作区脚本、npm 本地脚本和 echo 等白名单入口，不解释管道/重定向。获准脚本仍可访问工作区外文件和网络，必须只运行可信项目。
+- 命令使用精简子进程环境、输出上限、超时、Windows Job Object/POSIX 进程组清理；Job Object 仅管理进程生命周期，不隔离文件和网络。POSIX 分支尚未在本轮实机验证。
 - LLM 客户端只有协议；没有 HTTP 请求、模型响应解析和完整 Agent Loop。
 - Context 按完整交互轮次保留最近记录；字符/token 预算、输出截断和摘要待实现。
-- StopController 是可单测的策略，还未接入 Runtime；Shell 超时和进程树清理待实现。
+- StopController 是可单测的策略，还未接入 Runtime；命令超时与取消清理已在工具层实现，页面尚无任务取消入口。
 - 本机 Host/Origin 限制不是身份认证，不能作为对公网或多用户部署的安全保障。
 - 项目文件和命令输出将来要作为不可信数据处理；实际日志脱敏管道待实现。
 
 ## 项目文档
 
+- [M1 工具系统完成说明](docs/Coding%20Agent%20M1%20工具系统完成说明.md)：写入/替换/Diff、命令白名单、资源边界、修改文件与完整验证。
 - [M1 只读工具说明](docs/Coding%20Agent%20M1%20只读工具实现说明.md)：调用方法、输出字段、路径策略、资源限制和验证结果。
 - [项目结构与功能设计](docs/Coding%20Agent%20项目结构与功能设计文档.md)：第 9 节包含前后端逐文件职责、已实现/待实现部分、调用关系与测试文件对照。
 - [实施计划](docs/Coding%20Agent%20实施计划.md)

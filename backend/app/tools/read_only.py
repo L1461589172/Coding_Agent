@@ -111,7 +111,7 @@ def walk_entries(
     yield from visit(directory, 0)
 
 
-def read_text(workspace: Workspace, relative: str, limits: ReadLimits) -> tuple[str, int]:
+def read_bytes(workspace: Workspace, relative: str, limits: ReadLimits) -> bytes:
     path = workspace.resolve(relative)
     before = path.lstat()
     if stat.S_ISDIR(before.st_mode):
@@ -139,9 +139,18 @@ def read_text(workspace: Workspace, relative: str, limits: ReadLimits) -> tuple[
         os.close(fd)
     if len(data) > limits.max_file_bytes:
         raise ReadError("FILE_TOO_LARGE", "File exceeds the configured byte limit", len(data))
+    return data
+
+
+def decode_text(data: bytes) -> str:
     if any(byte < 32 and byte not in (9, 10, 13) for byte in data) or b"\x7f" in data:
         raise ReadError("BINARY_FILE", "Binary/control-byte content is not supported", len(data))
     try:
-        return data.decode("utf-8-sig"), len(data)
+        return data.decode("utf-8-sig")
     except UnicodeDecodeError as exc:
         raise ReadError("UNSUPPORTED_ENCODING", "Only UTF-8 text is supported", len(data)) from exc
+
+
+def read_text(workspace: Workspace, relative: str, limits: ReadLimits) -> tuple[str, int]:
+    data = read_bytes(workspace, relative, limits)
+    return decode_text(data), len(data)

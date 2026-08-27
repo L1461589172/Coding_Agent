@@ -3,11 +3,13 @@ from typing import Any
 from pydantic import ValidationError
 
 from app.tools.base import ToolResult, ToolSpec
+from app.tools.command_policy import CommandError
 from app.tools.files import file_specs
 from app.tools.read_only import ReadError, ReadLimits
 from app.tools.search import search_spec
-from app.tools.shell import shell_spec
+from app.tools.shell import CommandLimits, shell_spec
 from app.tools.workspace import Workspace, WorkspaceError
+from app.tools.writes import WriteError
 
 
 class ToolRegistry:
@@ -40,7 +42,7 @@ class ToolRegistry:
             )
         try:
             return await spec.handler(parsed)
-        except (WorkspaceError, ReadError) as exc:
+        except (WorkspaceError, ReadError, WriteError, CommandError) as exc:
             return ToolResult(ok=False, error_code=exc.code, error_message=str(exc))
         except FileNotFoundError:
             return ToolResult(ok=False, error_code="NOT_FOUND", error_message="Path does not exist")
@@ -68,8 +70,16 @@ class ToolRegistry:
             )
 
 
-def create_registry(workspace: Workspace, limits: ReadLimits | None = None) -> ToolRegistry:
+def create_registry(
+    workspace: Workspace,
+    limits: ReadLimits | None = None,
+    command_limits: CommandLimits | None = None,
+) -> ToolRegistry:
     policy = limits or ReadLimits()
     return ToolRegistry(
-        [*file_specs(workspace, policy), search_spec(workspace, policy), shell_spec()]
+        [
+            *file_specs(workspace, policy),
+            search_spec(workspace, policy),
+            shell_spec(workspace, command_limits or CommandLimits()),
+        ]
     )

@@ -2,6 +2,7 @@ import os
 import re
 import stat
 from pathlib import Path, PureWindowsPath
+from threading import RLock
 
 
 class WorkspaceError(ValueError):
@@ -45,6 +46,7 @@ class Workspace:
         if not self.root.is_dir():
             raise WorkspaceError("Workspace must be an existing directory")
         self._root_stat = self.root.stat()
+        self.write_lock = RLock()
 
     @staticmethod
     def is_link(info: os.stat_result) -> bool:
@@ -65,6 +67,7 @@ class Workspace:
                 raise WorkspaceError("Ambiguous or reserved path component is not allowed")
             if (
                 name in cls.BLOCKED
+                or name.startswith(".coding-agent-write-")
                 or name.startswith(".env.")
                 or name.endswith((".pem", ".key", ".pfx", ".p12", ".keystore"))
                 or name in {"id_rsa", "id_ed25519"}

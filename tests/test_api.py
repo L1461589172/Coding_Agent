@@ -17,9 +17,9 @@ def test_health_and_metadata_do_not_expose_settings(client):
         "list_files": "ready",
         "read_file": "ready",
         "search_text": "ready",
-        "write_file": "not_implemented",
-        "replace_in_file": "not_implemented",
-        "run_command": "not_implemented",
+        "write_file": "ready",
+        "replace_in_file": "ready",
+        "run_command": "ready",
     }
     assert "fixture-secret" not in json.dumps(meta)
     assert "api_key" not in meta

@@ -251,22 +251,11 @@ def test_registries_are_bound_to_separate_workspaces(tmp_path):
     assert execute(second, "read_file", {"path": "code.txt"}).output["content"] == "second"
 
 
-def test_reads_and_disabled_writes_preserve_content(project):
+def test_reads_preserve_content(project):
     before = {path: path.read_bytes() for path in project.rglob("*") if path.is_file()}
     assert execute(project, "list_files", {}).ok
     assert execute(project, "read_file", {"path": "README.md"}).ok
     assert execute(project, "search_text", {"query": "needle"}).ok
-    assert (
-        execute(
-            project,
-            "write_file",
-            {
-                "path": "README.md",
-                "content": "do not write",
-            },
-        ).error_code
-        == "NOT_IMPLEMENTED"
-    )
     assert {path: path.read_bytes() for path in before} == before
 
 

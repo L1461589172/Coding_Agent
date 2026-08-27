@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, model_validator
 from app.tools.base import ToolArgs, ToolResult, ToolSpec
 from app.tools.read_only import ReadLimits, WalkState, read_text, walk_entries
 from app.tools.workspace import Workspace
+from app.tools.writes import WriteError, commit_text, snapshot
 
 
 class ListFilesArgs(ToolArgs):
@@ -36,18 +37,40 @@ class ReplaceInFileArgs(ToolArgs):
     new_text: str = Field(max_length=100_000)
 
 
-async def not_implemented(arguments: BaseModel) -> ToolResult:
-    return ToolResult(
-        ok=False,
-        error_code="NOT_IMPLEMENTED",
-        error_message="文件写入工具尚未实现；没有修改任何文件。",
-    )
-
-
 class FileTools:
     def __init__(self, workspace: Workspace, limits: ReadLimits) -> None:
         self.workspace = workspace
         self.limits = limits
+
+    async def write_file(self, arguments: BaseModel) -> ToolResult:
+        assert isinstance(arguments, WriteFileArgs)
+        return await asyncio.to_thread(self._write_file, arguments)
+
+    def _write_file(self, args: WriteFileArgs) -> ToolResult:
+        with self.workspace.write_lock:
+            previous = snapshot(self.workspace, args.path, self.limits)
+            return commit_text(self.workspace, args.path, previous, args.content, self.limits)
+
+    async def replace_in_file(self, arguments: BaseModel) -> ToolResult:
+        assert isinstance(arguments, ReplaceInFileArgs)
+        return await asyncio.to_thread(self._replace_in_file, arguments)
+
+    def _replace_in_file(self, args: ReplaceInFileArgs) -> ToolResult:
+        from app.tools.read_only import decode_text
+
+        with self.workspace.write_lock:
+            previous = snapshot(self.workspace, args.path, self.limits)
+            if previous.info is None:
+                raise FileNotFoundError()
+            text = decode_text(previous.data)
+            first = text.find(args.old_text)
+            if first < 0:
+                raise WriteError("TEXT_NOT_FOUND", "Old text does not occur in the file")
+            # Include overlapping occurrences: 'aa' in 'aaa' is ambiguous too.
+            if text.find(args.old_text, first + 1) >= 0:
+                raise WriteError("AMBIGUOUS_MATCH", "Old text must occur exactly once")
+            updated = text[:first] + args.new_text + text[first + len(args.old_text) :]
+            return commit_text(self.workspace, args.path, previous, updated, self.limits)
 
     async def list_files(self, arguments: BaseModel) -> ToolResult:
         assert isinstance(arguments, ListFilesArgs)
@@ -144,11 +167,18 @@ def file_specs(workspace: Workspace, limits: ReadLimits) -> list[ToolSpec]:
             tools.read_file,
             implemented=True,
         ),
-        ToolSpec("write_file", "Create or overwrite a text file", WriteFileArgs, not_implemented),
+        ToolSpec(
+            "write_file",
+            "Atomically create or overwrite UTF-8 text and return a diff",
+            WriteFileArgs,
+            tools.write_file,
+            implemented=True,
+        ),
         ToolSpec(
             "replace_in_file",
             "Replace exactly one matching span",
             ReplaceInFileArgs,
-            not_implemented,
+            tools.replace_in_file,
+            implemented=True,
         ),
     ]

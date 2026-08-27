@@ -3,7 +3,7 @@
 > 计划周期：2026-08-27 至 2026-09-02  
 > 交付目标：先完成可重复的端到端 Agent 闭环，再补展示与提交材料。任何 P1 功能不得阻塞 P0。
 
-> 2026-08-27 进度：M0 已完成基础框架；M1 的路径解析、`list_files`、`read_file`、`search_text` 已实现并可独立调用。写入、Shell、真实 LLM 和完整 Agent Loop 尚未实现。详见《Coding Agent M1 只读工具实现说明》。
+> 2026-08-27 进度：M0 基础框架与 M1 六个本地工具已完成；写入/唯一替换/Diff、受限命令执行、超时/输出预算/进程清理均已验证。真实 LLM、工具事件和完整 Agent Loop 属于后续 M2/M3。详见 [M1 工具系统完成说明](Coding%20Agent%20M1%20工具系统完成说明.md)。
 
 ## 1. 里程碑
 
@@ -29,16 +29,18 @@
 
 ### M1：工具系统（08-28）
 
-当前基础：三个只读工具已绑定到指定 Workspace，可经 ToolRegistry.execute 调用；默认 Agent 尚未接入工具。写入和 Shell 保持关闭，因此 M1 整体仍未完成。
+当前状态：六个工具已绑定到指定 Workspace，可经 ToolRegistry.execute 调用；默认 Agent 尚未接入工具。M1 按单用户可信项目的 MVP 边界完成，不代表 M2 Agent 闭环完成，也不承诺 OS 安全沙箱。
 
 - [x] 完成 Workspace 路径解析与敏感路径拒绝（保守拒绝所有链接/reparse point，不等于强沙箱）。
 - [x] 完成 `list_files`、`read_file`、`search_text`（UTF-8、字面匹配、扫描/读取/输出上限）。
 - [x] 覆盖只读工具、路径别名、符号链接、Windows junction、硬链接、截断与错误结果的测试。
-- [ ] 完成 `write_file`、`replace_in_file` 和统一 diff。
-- [ ] 完成 `run_command`、超时、输出截断和危险命令检查。
-- [ ] 补齐写入唯一替换、命令超时及进程清理测试（路径穿越已覆盖）。
+- [x] 完成 `write_file`、`replace_in_file` 和统一 diff（同目录原子提交、哈希、唯一匹配与冲突检测）。
+- [x] 完成 `run_command`、超时、输出截断和危险命令检查（受限 argv 白名单，不解释 Shell 运算符）。
+- [x] 补齐写入唯一替换、命令超时及进程清理测试（正常退出、超时、取消、Job 分配失败均覆盖）。
 
 退出标准：不经过模型，工具层测试全部通过；任何文件写入都能给出可审计结果。
+
+验收：172 项测试通过，Ruff 与前端构建通过；无模型集成测试确认“创建失败例 → 真实 pytest 失败 → 唯一替换 → 真实 pytest 成功”。Windows Job Object 已实测；POSIX 进程组分支保留跨平台验收项待办。没有新增依赖或推进 M2。
 
 ### M2：Agent Runtime（08-29）
 

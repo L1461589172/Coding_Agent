@@ -1,1 +1,1 @@
-"""Workspace-bound read-only tools. Writes and command execution remain disabled."""
+"""Six local tools; explicit workspace, bounded output, no OS security sandbox."""
