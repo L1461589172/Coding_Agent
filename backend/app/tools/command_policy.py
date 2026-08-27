@@ -52,6 +52,9 @@ def child_environment(workspace: Workspace) -> dict[str, str]:
             "PYTHONUTF8": "1",
             "PYTHONUNBUFFERED": "1",
             "PYTHONNOUSERSITE": "1",
+            # This disables writes, NOT reads of existing pycs. The supervisor
+            # also assigns a fresh PYTHONPYCACHEPREFIX for each command (D001).
+            "PYTHONDONTWRITEBYTECODE": "1",
             "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
             "NO_COLOR": "1",
             "CI": "1",

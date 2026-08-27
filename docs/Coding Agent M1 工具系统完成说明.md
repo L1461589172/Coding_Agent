@@ -1,12 +1,12 @@
 # Coding Agent M1 工具系统完成说明
 
-源码核对日期：2026-08-27，基线 `39697d6`。文件名保留 M1 阶段交付名称；六工具功能已实现，但本次全量复验为 **171 passed, 1 failed**，D001 稳定性问题待修复。此前 172 passed 作为第 6 节历史记录保留；最新结果与问题证据见第 7 节。M2 的真实 LLM、Agent Loop、工具事件回填仍未实现。
+更新日期：2026-08-27，当前为 `6786d21` 后的 D001 修复工作区。六工具功能已实现，D001 已修复，新增 22 项回归后全量 **194 passed**；详见 [D001 修复说明](Coding%20Agent%20D001%20修复说明.md)。第 6 节保留 M1 的 172 passed 历史记录，第 7 节保留发现 D001 时的 171 passed / 1 failed 证据。M2 的真实 LLM、Agent Loop、工具事件回填仍未实现。
 
 ## 1. 当前完成范围
 
 六个工具都通过 `create_registry(Workspace(...))` 的 `execute()` 调用。工具 Schema 与参数保持兼容；`GET /api/meta` 中六个 `tool_statuses` 都为 `ready`，前端显示“工具就绪”。默认网页任务仍只验证任务/SSE 链路，并返回 `NOT_IMPLEMENTED`，不会自动读取、写入或执行命令。
 
-M1 实现阶段没有新增依赖、模型调用、文件查询 API、任务取消 API 或自动 Git 提交。仓库现在已有本地阶段提交；本次只核对和更新文档。测试中的真实命令只运行临时工作区内的测试样例。
+M1 实现阶段没有新增依赖、模型调用、文件查询 API、任务取消 API 或自动 Git 提交。仓库现在已有本地阶段提交；本次修复命令缓存策略并补回归，没有提交或推送。测试中的真实命令只运行临时工作区内的测试样例。
 
 ### 注册表接口
 
@@ -42,7 +42,7 @@ create_registry(
 | [tests/test_agent_contracts.py](../tests/test_agent_contracts.py)、[test_api.py](../tests/test_api.py)、[test_read_only_tools.py](../tests/test_read_only_tools.py) | 同步 handler 可用状态和只读不变性断言 |
 | [scripts/test.ps1](../scripts/test.ps1)（新增） | 自动选择独立随机临时/缓存目录运行 pytest，避免账户权限冲突 |
 
-M1 实现时已同步 README、实施计划和结构设计文档。只读阶段说明保留首次变更记录，同时可作为当前只读工具参考；本轮最新验证统一见本文第 7 节及 docs/README.md。
+M1 实现时已同步 README、实施计划和结构设计文档。只读阶段说明保留首次变更记录，同时可作为当前只读工具参考；本轮 D001 的具体修改与最新验证见修复说明及 docs/README.md。
 
 ## 3. write_file 与 replace_in_file
 
@@ -100,6 +100,7 @@ Diff 使用共同前后缀和三行上下文生成单个 hunk，线性开销，�
 
 - 仅传递必要的 OS/路径/临时目录/用户配置目录/语言变量；不继承 API Key、任意 token、PYTHONPATH、NODE_OPTIONS 等。固定 Windows ComSpec 到系统 cmd.exe，供 npm 生命周期使用。
 - Python 设置 UTF-8、无缓冲输出，关闭用户 site 与 pytest 第三方插件自动发现；需要第三方插件的项目应显式配置，而非继承任意宿主插件。
+- 每命令固定 `PYTHONDONTWRITEBYTECODE=1`，并将 `PYTHONPYCACHEPREFIX` 指向新建临时目录：绕过已有 CPython/pytest 字节码，避免 D001 同秒等长修改复用旧缓存；不删除或重写工作区已有 `.pyc`。正常继承环境的 Python 子进程也使用该策略。
 - 不返回整个环境字典。stdout/stderr 是目标程序产生的不可信文本，仍可能含项目自行读取的凭据或绝对路径；本阶段没有通用输出脱敏，调用方必须谨慎展示和记录。
 - 两个流独立读取并持续排空，每流保留前 32 KiB；UTF-8 无效字节替换为 `�`。超过保留量标记截断，但不因此改变成功退出状态。
 - 总输出超过 4 MiB 时终止进程，返回 `COMMAND_OUTPUT_LIMIT`；阈值由监督器轮询观察，实际累计读取可能略超阈值，但保留缓冲区有界，不将无限输出写入磁盘。
@@ -113,6 +114,7 @@ Diff 使用共同前后缀和三行上下文生成单个 hunk，线性开销，�
 - POSIX 下启动新会话并在清理时终止进程组；主动 `setsid` 逃离的进程不在该保证内。该分支本轮未在 Linux/macOS 实机验收。
 - 正常命令退出后也清理其后台子进程。因此该工具不适合启动长期开发服务器。
 - 默认进程回收等待最多 3 秒，输出线程总回收窗口最多 3 秒；失败返回 `COMMAND_CLEANUP_FAILED`。OS 的进程创建、阻塞 I/O 和恶意逃逸不受 Python 硬实时保证。
+- 进程/管道清理后回收本次字节码目录；创建失败不启动命令，清理无法确认不能按成功处理。默认 `compileall` 显式生成的字节码也进入该目录并清理；该工具不是持久预编译产物交付入口。临时目录文件系统清理没有硬实时保证。
 
 ### 结果与错误
 
@@ -126,7 +128,7 @@ Diff 使用共同前后缀和三行上下文生成单个 hunk，线性开销，�
 | COMMAND_FAILED | 命令非零退出；查看输出及 exit_code |
 | COMMAND_TIMEOUT | 超出运行时间预算 |
 | COMMAND_OUTPUT_LIMIT | 超出总输出预算并终止 |
-| COMMAND_CLEANUP_FAILED | 无法确认进程/管道清理，不能按成功处理 |
+| COMMAND_CLEANUP_FAILED | 无法确认进程/管道/本次字节码目录清理，不能按成功处理 |
 | COMMAND_CANCELLED | 工作线程观察到取消；正常异步调用方收到 CancelledError |
 | TEXT_NOT_FOUND / AMBIGUOUS_MATCH | 替换的旧文本未找到 / 不唯一 |
 | FILE_CHANGED | 检测到写前竞争变化，未应用本次编辑 |
@@ -135,7 +137,7 @@ Diff 使用共同前后缀和三行上下文生成单个 hunk，线性开销，�
 
 ## 5. 独立调用示例
 
-先按 README 安装后端。在仓库根目录的 Python 解释器执行下列代码；它只在新建的临时目录内写文件和运行测试，不修改 demo_workspace 或仓库源码。预期先失败、修改后通过，但当前存在 D001：同秒等长修改可能使第二次 pytest 复用旧字节码。必须检查实际 ToolResult，不能把这个示例当作稳定成功保证。
+先按 README 安装后端。在仓库根目录的 Python 解释器执行下列代码；它只在新建的临时目录内写文件和运行测试，不修改 demo_workspace 或仓库源码。预期先失败、修改后通过；D001 已修复并覆盖同秒等长修改的回归。仍须检查实际 ToolResult，不能忽略命令失败。
 
 ```python
 import asyncio
@@ -166,7 +168,7 @@ async def main():
 asyncio.run(main())
 ```
 
-这个例子中的测试不需要 tmp_path。测试本项目时请使用 `scripts/test.ps1`，它把 pytest 临时目录与 pytest 缓存分离到随机路径，避免此前“6 项通过，98 项 tmp_path 初始化权限失败”的账户冲突。脚本从 backend 目录也能调用，但它不隔离子命令的 Python 字节码缓存，因此不能解决 D001。完整命令见 [文档导航](README.md#如何复验)。
+这个例子中的测试不需要 tmp_path。测试本项目时请使用 `scripts/test.ps1`，它把 pytest 临时目录与状态缓存分离到随机路径，避免此前“6 项通过，98 项 tmp_path 初始化权限失败”的账户冲突。D001 的字节码隔离由 `run_command` 实现，不是脚本的 `--basetemp` / `cache_dir` 功能。完整命令见 [文档导航](README.md#如何复验)，机制区别见 D001 修复说明。
 
 ## 6. M1 实现阶段的历史验证与未完成项
 
@@ -184,7 +186,9 @@ asyncio.run(main())
 
 ## 7. 本次文档核对与已知问题
 
-### 最新验证记录
+本节保留上一次文档核对时的问题记录。**D001 现已修复**，当前 194 passed；本轮方案、22 项新回归及重复验证见 [D001 修复说明](Coding%20Agent%20D001%20修复说明.md)。以下 171/1 不是修复后结果。
+
+### 发现问题时的验证记录
 
 在当前 Windows/Python 3.12.4、pytest 9.1.1 环境，以 `scripts/test.ps1` 的独立随机临时/缓存路径重新运行，结果为 **171 passed, 1 failed, 1 warning**。未修改源码或测试，未删除失败样例。Ruff lint 与 39 文件格式检查通过；本次没有重跑普通用户账户、前端构建或浏览器 smoke。
 
@@ -202,7 +206,7 @@ asyncio.run(main())
 
 ### D001：同秒等长修改后重复 pytest 可能执行旧断言
 
-状态：**已确认、未修复**。失败项为 [test_local_tool_workflow_without_llm](../tests/test_shell_tools.py)，发生于替换之后的第二次 `run_command`。它不同于此前 tmp_path 权限错误，也不是 Starlette 弃用警告造成的失败。
+发现时状态为已确认、未修复；现已通过命令级缓存策略修复。原失败项为 [test_local_tool_workflow_without_llm](../tests/test_shell_tools.py)，发生于替换之后的第二次 `run_command`。它不同于此前 tmp_path 权限错误，也不是 Starlette 弃用警告造成的失败。
 
 本次失败样例的只读检查证据：
 
@@ -216,6 +220,6 @@ asyncio.run(main())
 
 当前安装的 `_pytest/assertion/rewrite.py::_read_pyc` 使用 `int(st_mtime)` 与文件大小判断缓存是否有效。原内容 `== 3` 与新内容 `== 2` 长度相同，且写入发生在同一秒，缓存校验因此接受旧断言字节码。是否跨过秒边界影响复现，所以历史全通过与本次失败并不矛盾；重试偶然通过不代表修复。
 
-影响：文件工具返回成功和哈希变化不能保证下一次 Python/pytest 一定加载新源码。当前环境白名单没有传递字节码缓存控制项，命令策略也未开放任意解释器选项。普通 `--basetemp`、pytest `cache_dir` 与 Python `__pycache__` 是不同机制。
+修复前的影响：文件工具返回成功和哈希变化不能保证下一次 Python/pytest 加载新源码。当时环境白名单没有设置字节码缓存控制项；本轮已增加独立前缀与禁写策略，未开放任意解释器选项。普通 `--basetemp`、pytest `cache_dir` 与 Python `__pycache__` 是不同机制。
 
-后续修复验收：明确命令级字节码缓存隔离/失效策略，兼顾已有缓存与新增缓存；增加可确定复现同秒等长修改的测试，多次运行工具流程和全量测试。不能以“等待一秒”“改成不同长度”或删掉失败断言替代修复。本轮按文档更新范围只记录事实，没有更改代码、缓存策略或测试。
+当时提出的验收要求已纳入本轮修复：兼顾已有/新增缓存，固定时间戳与等长修改回归，重复运行工具流程和全量测试。未通过“等待一秒”“改成不同长度”或删掉失败断言绕过故障。历史发现阶段仅更新文档，本轮按用户要求完成代码修复。

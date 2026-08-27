@@ -1,12 +1,12 @@
 # Coding Agent 项目结构与功能设计文档
 
-> 版本：v2.4（源码状态复核、历史口径统一与 D001 复验问题）
+> 版本：v2.5（D001 修复、命令级字节码缓存与确定性回归）
 >
 > 修订日期：2026-08-27
 >
 > 目标：在 2026-09-02 24:00 前交付一个能够完成真实编程任务、过程可解释、核心 Agent 逻辑自行实现的本地 MVP。
 
-> 阅读说明：以本地源码提交 `39697d6` 核对。目标架构不等于当前行为；第 9/13 节描述实际代码。M1 六工具功能已实现，但本次测试为 171 passed / 1 failed，D001 稳定性问题待修复。文档索引和验证口径见 [docs/README](README.md)。
+> 阅读说明：当前为本地提交 `6786d21` 后的 D001 修复工作区。目标架构不等于当前行为；第 9/13 节描述实际代码。M1 六工具已实现，D001 已修复，新增 22 项回归后全量 194 passed。文档索引和验证口径见 [docs/README](README.md)。
 
 ## 1. 结论与修订摘要
 
@@ -252,7 +252,7 @@ M1 已实现 argv 白名单、精简环境、超时、输出预算，以及 Wind
 - **待实现**：尚未编写的行为，或已有逻辑尚未接入 Runtime；不等于要求现在新增一个文件。
 - 表格中的“无本阶段新增项”仅表示该辅助文件已满足当前职责，不表示整个模块或项目完成。
 
-当前网页完整可观察链路是“创建任务 -> 框架说明 -> `FAILED / NOT_IMPLEMENTED`”。独立工具已经能真实读写和执行命令；尚未完成的是 LLM 自主决策、循环调度、事件回填与页面端到端展示。无模型修复流程存在 D001 字节码缓存复用问题。
+当前网页完整可观察链路是“创建任务 -> 框架说明 -> `FAILED / NOT_IMPLEMENTED`”。独立工具已经能真实读写和执行命令；尚未完成的是 LLM 自主决策、循环调度、事件回填与页面端到端展示。无模型修复流程的 D001 字节码缓存问题已修复并加入确定性回归。
 
 M1 六个工具已可独立通过注册表调用；默认页面任务未接入它们。只读语义见 [只读阶段说明](Coding%20Agent%20M1%20只读工具实现说明.md)，写入、命令与最新验证见 [M1 工具系统完成说明](Coding%20Agent%20M1%20工具系统完成说明.md)。
 
@@ -370,8 +370,8 @@ backend/app/
 | [tools/files.py](../backend/app/tools/files.py) | 文件工具集合 | list_files/read_file 与写入/唯一替换的参数和线程 handler；替换检查包含重叠匹配，零次或多次均拒绝；调用 writes 完成变更 | Runtime 接入、file_changed 事件；多文件事务不在 MVP 范围 |
 | [tools/writes.py](../backend/app/tools/writes.py) | 文本变更基础设施 | 有界快照、写前冲突检查、同目录临时文件/fsync、原子替换/无覆盖创建、失败清理；BOM 保留、前后 SHA-256、受限单段统一 Diff | 不是跨进程 compare-and-swap；不保留所有 ACL/扩展属性，不提供回滚历史或多文件事务 |
 | [tools/search.py](../backend/app/tools/search.py) | 文本搜索工具 | 文件/目录范围内区分大小写的字面搜索；路径、行列号、片段；文件数/字节/输出上限与跳过统计，线程中执行 | Runtime 接入；正则表达式、非 UTF-8 编码和索引不在当前实现范围 |
-| [tools/shell.py](../backend/app/tools/shell.py) | 本地命令工具 | CommandLimits、固定 cwd、双线程有界捕获 stdout/stderr、退出状态、超时/输出预算/取消、正常退出后的子进程清理 | Runtime 与 command_finished 事件接入；没有交互终端、后台服务或流式 UI |
-| [tools/command_policy.py](../backend/app/tools/command_policy.py) | 命令策略 | 解析受限 argv，允许 Python/pytest、Node 工作区脚本、npm 本地脚本和 echo；拒绝 Shell 运算符和任意程序；可信 PATH 定位、环境白名单及固定 ComSpec | D001 的命令级缓存策略待明确；不分析脚本内容或插件行为，不能限制获准程序的文件/网络访问 |
+| [tools/shell.py](../backend/app/tools/shell.py) | 本地命令工具 | CommandLimits、固定 cwd、双流有界捕获、退出状态、超时/输出预算/取消、子进程清理；每命令创建并清理独立字节码前缀，修复 D001 | Runtime 与 command_finished 事件接入；没有交互终端、后台服务或流式 UI |
+| [tools/command_policy.py](../backend/app/tools/command_policy.py) | 命令策略 | 受限 argv、开发命令白名单、可信 PATH、环境白名单及固定 ComSpec；固定禁写 Python 字节码，配合 shell 的新缓存前缀 | 不分析脚本内容或插件行为，不能限制获准程序的文件/网络访问 |
 | [tools/command_worker.py](../backend/app/tools/command_worker.py) | 受控启动器 | Python -I 启动，等待父进程许可后才运行目标 argv；stdin 禁用、转发退出状态；目标程序继承 Job/进程组 | 不是独立用户接口，不应从不可信工作区替换本项目的运行时代码 |
 | [tools/windows_job.py](../backend/app/tools/windows_job.py) | Windows 进程树管理 | ctypes 封装 Job 创建、kill-on-close、分配、终止和句柄关闭；未获分配许可不启动用户命令 | 仅管理生命周期，不提供文件/网络沙箱；POSIX 路径由 shell.py 的进程组实现 |
 
@@ -453,7 +453,8 @@ TaskManager / Runtime -> core/events.py（EventLog）
 | [tests/test_workspace.py](../tests/test_workspace.py) | 相对路径、越界、敏感路径、Windows 别名、符号链接/junction/硬链接、根目录替换测试 | 持续补充文件系统边界与跨平台验收 |
 | [tests/test_read_only_tools.py](../tests/test_read_only_tools.py) | 三个工具真实读取、过滤、UTF-8/CRLF、预算/截断、错误码、线程执行、工作区隔离及不修改内容 | 真实 Agent Loop 端到端测试不在此文件范围 |
 | [tests/test_write_tools.py](../tests/test_write_tools.py) | 创建/覆盖/不变、BOM/CRLF、唯一与重叠匹配、路径守卫、大小/Diff 限制、失败清理与并发变更检查 | 跨平台文件系统/ACL 与恶意并发环境仍需独立验收 |
-| [tests/test_shell_tools.py](../tests/test_shell_tools.py) | 白名单、环境裁剪、双流输出、超时/取消、子进程清理、Job 分配失败、Node/npm 及无模型修复流程 | 本次无模型流程复验失败，需补 D001 确定性回归；POSIX 实机验收、Runtime 与模型端到端测试 |
+| [tests/test_shell_tools.py](../tests/test_shell_tools.py) | 白名单、环境裁剪、双流输出、超时/取消、子进程清理、Job 分配失败、Node/npm 及无模型修复流程 | POSIX 实机验收、Runtime 与模型端到端测试 |
+| [tests/test_command_bytecode.py](../tests/test_command_bytecode.py) | D001 的 22 项回归：固定时间戳/等长修改/真实旧缓存，两种写工具和三种 pytest 入口；继承、重复调用、目录清理与异常、显式 compileall | 后续命令策略变更持续回归；不覆盖脚本主动修改环境或自定义加载器 |
 | [tests/test_agent_contracts.py](../tests/test_agent_contracts.py) | 配置、Context 配对、Stop 独立策略、工具 Schema 与实际分发 | 真实 LLM 适配、工具执行、预算/终止的完整 Loop 测试 |
 | [tests/test_events.py](../tests/test_events.py) | 实时订阅/历史回放、心跳、读者断开、终态禁止追加 | 大载荷、多订阅者和历史体积限制测试 |
 | [tests/test_task_manager.py](../tests/test_task_manager.py) | 创建后立即关闭、注入测试 Runner 的成功分支 | 默认真实 Runtime 完成任务的测试 |
@@ -467,7 +468,7 @@ TaskManager / Runtime -> core/events.py（EventLog）
 
 | 阶段 | 前端待实现 | 后端待实现 | 主要落点 |
 |---|---|---|---|
-| M1：功能已实现，复验待修复 | 六工具就绪标签已有；真实结果卡片属于 M3 | 六工具与资源限制已有；优先处理 D001，明确命令缓存策略与稳定回归 | `tools/command_policy.py`、`shell.py`、`writes.py`、`tests/test_shell_tools.py` |
+| M1：已实现，D001 已修复 | 六工具就绪标签已有；真实结果卡片属于 M3 | 六工具、资源限制及独立字节码缓存已有；持续维护回归，POSIX 实机验收待完成 | `tools/command_policy.py`、`shell.py`、`tests/test_command_bytecode.py` |
 | M2：Agent 闭环 | 准备接收真实工具事件 | LLM 具体适配、循环、结果回填、上下文预算、Stop 与恢复机制、事件载荷限制 | `agent/llm.py`、`runtime.py`、`context.py`、`stop.py`、`core/events.py` |
 | M3：执行过程展示 | 专用 Tool/Shell/File Change 卡片、统计和连接恢复验收 | 真实中间事件与结构化结果，保持 API/前端类型一致 | `App.vue`、`types.ts`、`api/client.ts`、`components/`；`models/event.py`、`models/task.py` |
 | P1：Workspace / 静态托管 | 文件树、Code Viewer、Diff Viewer | 文件查询 API、前端静态产物托管 | 未来扩展 `components/`、`api/routes.py`、`main.py`；新增文件名尚未确定 |
@@ -488,7 +489,7 @@ TaskManager / Runtime -> core/events.py（EventLog）
 
 ### 11.1 核心单元测试
 
-下面是目标验收清单。前四项已有自动化测试；Loop 级停止和真实 LLM 错误处理尚未实现。当前测试存在 D001，不能据此宣称完整验收通过。
+下面是目标验收清单。前四项已有自动化测试，D001 已补回归并修复；Loop 级停止和真实 LLM 错误处理尚未实现，工具层通过不代表完整 Agent 验收通过。
 
 - 路径穿越和符号链接逃逸被拒绝。
 - 文件读取行范围、输出截断正确。
@@ -532,7 +533,7 @@ TaskManager / Runtime -> core/events.py（EventLog）
 
 这个范围既满足题目对“编程智能体”的定义，也把时间投入集中在评委会追问的部分：Agent 为什么这样运行、每一步由谁决定、工具如何落地、错误怎样反馈、循环为何会停止。
 
-## 13. 当前实现状态（2026-08-27，M1 功能已实现，稳定性复验待修复）
+## 13. 当前实现状态（2026-08-27，M1 已实现，D001 已修复）
 
 功能设计章节描述目标，不代表全部完成；第 9 节与本节描述当前实现。M0 已创建可启动的后端和前端，以及后续功能的模块接口；真实编程能力仍按实施计划推进。
 
@@ -543,10 +544,11 @@ TaskManager / Runtime -> core/events.py（EventLog）
 - 只读边界：UTF-8 普通文件、固定忽略规则、拒绝链接、资源预算及截断元数据已实现；不是并发对抗环境下的强沙箱。
 - LLM：只建立客户端协议与模型返回结构，未实现模型供应商适配器或外部请求。
 - 写入与命令：UTF-8 原子写入、唯一替换、Diff/哈希、精简环境、命令白名单、超时/输出预算/回收已实现；不代表命令内脚本被沙箱隔离。
-- 最新复验：172 项被收集，实际 171 passed / 1 failed；失败项是无模型修复流程，源码更新后复用旧 pytest 字节码（D001）。此前 172 passed 保留为历史记录，未运行真实模型任务。
+- 最新复验：新增 22 项确定性/生命周期测试后全量 194 passed，Ruff（40 文件）和 pip check 通过；重复运行记录见 D001 修复说明。此前 172 passed 及发现问题时的 171 passed / 1 failed 保留为历史；未运行真实模型任务。
+- D001：每命令新建 PYTHONPYCACHEPREFIX 并固定禁写字节码，普通 Python 子进程继承；不删除工作区已有缓存，命令结束后清理本次目录。该策略增加冷导入开销，也不是对主动覆盖环境或 sys.modules 热重载的保证。
 - 上下文与终止：完整轮次裁剪和重复/步数策略有单元测试；尚未接入完整 Loop，也没有 token 预算。命令超时和取消回收已在工具层实现。
 - EventBus 在代码中以每任务 `EventLog` 实现。事件 `id` 是任务内递增数字字符串，用于 `Last-Event-ID` / `after` 续传；终态已读完返回 204。
 - TaskManager 保留至多 100 个内存任务，超过上限返回 503。现阶段每个框架任务只有三个小事件；真实工具接入 Runtime 前还必须增加事件载荷/历史体积限制。
 - 安全：先实现路径越界与常见敏感路径校验、Host/Origin 限制、配置与异常详情不透出；这些不是强沙箱，也不是完备的敏感内容扫描。
 - 源码尚有历史提示文本：cli.py 的帮助说明含 execution disabled，TaskManager 的 NOT_IMPLEMENTED 文案仍提及实现 M1/M2。本轮未修改这些代码；应理解为 Agent 执行未接入，而非六工具仍为空壳。
-- 最新验证、文档导航和独立 pytest 临时/缓存运行方式见 [docs/README](README.md)；D001 证据见 [M1 说明第 7 节](Coding%20Agent%20M1%20工具系统完成说明.md#7-本次文档核对与已知问题)。前端构建和浏览器验证本次未重跑，历史记录不替代最新验收。
+- 最新验证、文档导航和独立 pytest 临时/缓存运行方式见 [docs/README](README.md)；D001 修复与三类缓存/权限区别见 [修复说明](Coding%20Agent%20D001%20修复说明.md)。前端构建和浏览器验证本次未重跑，历史记录不替代最新验收。

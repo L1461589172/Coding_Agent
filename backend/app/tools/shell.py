@@ -7,6 +7,7 @@ import sys
 import threading
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from time import monotonic
 
 from pydantic import BaseModel, Field
@@ -102,11 +103,17 @@ class CommandTool:
         capture = Capture(self.limits)
         process = None
         job = None
+        bytecode_directory = None
         threads: list[threading.Thread] = []
         reason = "exited"
         cleanup_ok = True
         exit_code = None
         try:
+            # Bypass timestamp-valid but stale CPython AND pytest assertion pycs.
+            # Never delete the workspace's existing caches. Descendant Python
+            # processes inherit this prefix and the no-write policy as well.
+            bytecode_directory = TemporaryDirectory(prefix="coding-agent-pycache-")
+            environment["PYTHONPYCACHEPREFIX"] = bytecode_directory.name
             if os.name == "nt":
                 from app.tools.windows_job import WindowsJob
 
@@ -181,6 +188,13 @@ class CommandTool:
             if process is not None and not threads:
                 process.stdout.close()
                 process.stderr.close()
+            # Do this only after process/pipe cleanup, including start failure
+            # and cancellation. Explicit compileall may have written here.
+            if bytecode_directory is not None:
+                try:
+                    bytecode_directory.cleanup()
+                except OSError:
+                    cleanup_ok = False
         output = capture.output()
         if reason == "exited" and capture.overflow.is_set():
             reason = "output_limit"
@@ -193,7 +207,7 @@ class CommandTool:
             "cancelled": ("COMMAND_CANCELLED", "Command was cancelled"),
             "cleanup_failed": (
                 "COMMAND_CLEANUP_FAILED",
-                "Process/pipe cleanup could not be confirmed",
+                "Process/pipe/bytecode cache cleanup could not be confirmed",
             ),
         }
         code, message = errors.get(reason, (None, None))
