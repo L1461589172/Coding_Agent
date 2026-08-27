@@ -3,6 +3,8 @@
 > 计划周期：2026-08-27 至 2026-09-02  
 > 交付目标：先完成可重复的端到端 Agent 闭环，再补展示与提交材料。任何 P1 功能不得阻塞 P0。
 
+> 2026-08-27 框架进度：M0 目录、配置、安装和基础验证已完成；任务 API、SSE、Vue 页面可联调。真实 LLM、六个工具执行和完整 Agent Loop 尚未实现。详见《Coding Agent 基础框架修改说明》。
+
 ## 1. 里程碑
 
 | 日期 | 里程碑 | 完成定义 |
@@ -21,11 +23,13 @@
 
 - [x] 阅读项目要求并完成设计可行性复核。
 - [x] 明确禁止 Agent 框架和托管代码/文件工具。
-- [ ] 建立后端、前端、测试和配置目录框架。
-- [ ] 安装依赖并运行健康检查。
+- [x] 建立后端、前端、测试和配置目录框架。
+- [x] 安装依赖并运行健康检查。
 - [ ] 建立小步、可解释的 Git 提交。
 
 ### M1：工具系统（08-28）
+
+当前基础：Workspace 路径校验与六个工具的参数/返回协议已创建。执行入口仍关闭，以下项不得因骨架存在而判定完成。
 
 - [ ] 完成 Workspace 路径解析与敏感路径拒绝。
 - [ ] 完成 `list_files`、`read_file`、`search_text`。
@@ -37,6 +41,8 @@
 
 ### M2：Agent Runtime（08-29）
 
+当前基础：LLMClient 协议、按完整轮次保留消息的 Conversation、独立 StopController 已可单测；默认 Runtime 只发出未实现说明，没有模型调用或工具循环。
+
 - [ ] 完成 OpenAI 兼容 LLM 客户端和 tool schema 转换。
 - [ ] 完成 Conversation、ContextBuilder、ToolRegistry。
 - [ ] 完成 Agent Loop 与事件发布。
@@ -47,12 +53,14 @@
 
 ### M3：API 与 UI（08-30）
 
-- [ ] 完成 TaskManager、创建/查询任务 API。
-- [ ] 完成事件历史回放与 SSE 订阅。
+- [x] 完成 TaskManager、创建/查询任务 API（当前接入占位 Runtime）。
+- [x] 完成事件历史回放与 SSE 订阅（包含游标、心跳及终态关闭）。
 - [ ] 完成 Vue 任务输入、状态、Timeline、Tool/Shell/File Change 卡片。
 - [ ] 处理重复提交、SSE 断线和失败状态。
 
 退出标准：浏览器中能观察从 task_started 到 task_completed/failed 的完整事件。
+
+注意：框架仅验证 `task_started -> assistant_message -> task_failed(NOT_IMPLEMENTED)`；工具、Shell 和文件变化的真实载荷还未集成，因此 M3 整体不视为完成。
 
 ### M4：Demo 与可靠性（08-31）
 
