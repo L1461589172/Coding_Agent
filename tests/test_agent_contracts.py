@@ -19,6 +19,20 @@ def test_config_does_not_repr_secret(tmp_path):
         Settings(workspace=tmp_path, llm_max_retries=11)
     with pytest.raises(ValueError):
         Settings(workspace=tmp_path, llm_timeout_seconds=float("nan"))
+    with pytest.raises(ValueError):
+        Settings(workspace=tmp_path, context_max_characters=0)
+    with pytest.raises(ValueError):
+        Settings(workspace=tmp_path, context_max_tokens=0)
+    with pytest.raises(ValueError):
+        Settings(workspace=tmp_path, tool_result_max_characters=255)
+    with pytest.raises(ValueError):
+        Settings(workspace=tmp_path, context_recent_rounds=0)
+    assert not Settings(
+        workspace=tmp_path,
+        api_key=" ",
+        base_url="https://model.example/v1",
+        model="fixture-model",
+    ).model_configured
 
 
 def test_model_policy_settings_from_env(tmp_path, monkeypatch):
@@ -28,12 +42,21 @@ def test_model_policy_settings_from_env(tmp_path, monkeypatch):
     monkeypatch.setenv("CODING_AGENT_LLM_TIMEOUT_SECONDS", "45.5")
     monkeypatch.setenv("CODING_AGENT_LLM_CONNECT_TIMEOUT_SECONDS", "7.5")
     monkeypatch.setenv("CODING_AGENT_LLM_MAX_RETRIES", "3")
+    monkeypatch.setenv("CODING_AGENT_CONTEXT_MAX_CHARACTERS", "60000")
+    monkeypatch.setenv("CODING_AGENT_CONTEXT_MAX_TOKENS", "15000")
+    monkeypatch.setenv("CODING_AGENT_TOOL_RESULT_MAX_CHARACTERS", "9000")
+    monkeypatch.setenv("CODING_AGENT_CONTEXT_RECENT_ROUNDS", "6")
     settings = Settings.from_env(str(tmp_path))
     assert settings.base_url == "https://model.example/v1"
     assert settings.model == "test-model"
     assert settings.llm_timeout_seconds == 45.5
     assert settings.llm_connect_timeout_seconds == 7.5
     assert settings.llm_max_retries == 3
+    assert settings.context_max_characters == 60_000
+    assert settings.context_max_tokens == 15_000
+    assert settings.tool_result_max_characters == 9_000
+    assert settings.context_recent_rounds == 6
+    assert settings.model_configured
     assert "environment-secret" not in repr(settings)
 
 

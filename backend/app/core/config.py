@@ -13,6 +13,10 @@ class Settings:
     llm_timeout_seconds: float = 60.0
     llm_connect_timeout_seconds: float = 10.0
     llm_max_retries: int = 2
+    context_max_characters: int = 80_000
+    context_max_tokens: int = 20_000
+    tool_result_max_characters: int = 12_000
+    context_recent_rounds: int = 8
     max_steps: int = 20
     max_tasks: int = 100
     port: int = 8000
@@ -29,6 +33,12 @@ class Settings:
             raise ValueError("LLM timeouts must be positive")
         if not 0 <= self.llm_max_retries <= 10:
             raise ValueError("llm_max_retries must be between 0 and 10")
+        if self.context_max_characters < 1 or self.context_max_tokens < 1:
+            raise ValueError("Context character and token budgets must be positive")
+        if self.tool_result_max_characters < 256:
+            raise ValueError("tool_result_max_characters must be at least 256")
+        if self.context_recent_rounds < 1:
+            raise ValueError("context_recent_rounds must be positive")
         if not 1 <= self.port <= 65535:
             raise ValueError("port must be between 1 and 65535")
 
@@ -44,6 +54,12 @@ class Settings:
                 environ.get("CODING_AGENT_LLM_CONNECT_TIMEOUT_SECONDS", "10")
             ),
             llm_max_retries=int(environ.get("CODING_AGENT_LLM_MAX_RETRIES", "2")),
+            context_max_characters=int(environ.get("CODING_AGENT_CONTEXT_MAX_CHARACTERS", "80000")),
+            context_max_tokens=int(environ.get("CODING_AGENT_CONTEXT_MAX_TOKENS", "20000")),
+            tool_result_max_characters=int(
+                environ.get("CODING_AGENT_TOOL_RESULT_MAX_CHARACTERS", "12000")
+            ),
+            context_recent_rounds=int(environ.get("CODING_AGENT_CONTEXT_RECENT_ROUNDS", "8")),
             max_steps=int(environ.get("CODING_AGENT_MAX_STEPS", "20")),
             port=port,
         )
@@ -55,3 +71,7 @@ class Settings:
             for host in ("localhost", "127.0.0.1")
             for port in sorted({5173, self.port})
         ]
+
+    @property
+    def model_configured(self) -> bool:
+        return bool(self.api_key.strip() and self.base_url.strip() and self.model.strip())

@@ -3,7 +3,7 @@
 > 计划周期：2026-08-27 至 2026-09-02  
 > 交付目标：先完成可重复的端到端 Agent 闭环，再补展示与提交材料。任何 P1 功能不得阻塞 P0。
 
-> 2026-08-28 更新：M0、M1 已实现；M2 已完成 OpenAI-compatible HTTP 客户端、响应校验、有限重试与资源关闭，全量 **221 passed**。Agent Loop 与 M3 仍未闭环。详见 [当前状态](README.md) 与 [M2 LLM 适配说明](Coding%20Agent%20M2%20LLM%20HTTP%20适配说明.md)。
+> 2026-08-28 更新：M0、M1 已实现；M2 已完成 HTTP 客户端、上下文总预算/结果裁剪和按调用 ID 回填的 Agent Loop，全量 **234 passed**。工具事件与连续错误恢复仍待完成。详见 [当前状态](README.md) 与 [M2 Loop 说明](Coding%20Agent%20M2%20上下文预算与%20Agent%20Loop%20说明.md)。
 
 ## 1. 里程碑
 
@@ -11,7 +11,7 @@
 |---|---|---|---|
 | 08-27 | 架构冻结与框架建立 | 可导入、健康检查、核心协议 | 基础框架已实现 |
 | 08-28 | 本地工具闭环 | 六工具与路径/超时/稳定测试 | 已实现；D001 已修复并验证 |
-| 08-29 | Agent Loop 闭环 | 模型调用、结果回填、终止生效 | 协议和独立组件已有，循环未实现 |
+| 08-29 | Agent Loop 闭环 | 模型调用、结果回填、终止生效 | 基础循环/预算/步数与重复停止已实现；恢复和工具事件待补 |
 | 08-30 | API 与前端时间线 | 完整真实执行事件 | 任务/SSE 与通用 UI 已实现，工具事件未接入 |
 | 08-31 | Demo 打通 | 真实模型连续成功至少 3 次 | 仅有工作区占位说明 |
 | 09-01 | 稳定、文档与录制 | 全量验收、README.txt、视频 | 开发文档已有，最终交付未完成 |
@@ -29,7 +29,7 @@
 
 ### M1：工具系统（08-28）
 
-当前状态：六个工具已绑定到指定 Workspace，可经 ToolRegistry.execute 调用；默认 Agent 尚未接入工具。D001 已修复并补充确定性回归；不代表 M2 Agent 闭环完成，也不承诺 OS 安全沙箱。
+当前状态：六个工具已绑定到指定 Workspace，可经 ToolRegistry.execute 调用并已接入 Agent Loop。D001 已修复并补充确定性回归；仍不承诺 OS 安全沙箱。
 
 - [x] 完成 Workspace 路径解析与敏感路径拒绝（保守拒绝所有链接/reparse point，不等于强沙箱）。
 - [x] 完成 `list_files`、`read_file`、`search_text`（UTF-8、字面匹配、扫描/读取/输出上限）。
@@ -42,27 +42,27 @@
 
 退出标准：不经过模型，工具层测试全部通过；任何文件写入都能给出可审计结果。
 
-历史记录为 172 passed，随后复验发现 D001（171 passed / 1 failed）。M1 修复阶段新增 22 项并达到 194 passed；重复运行与执行环境见 D001 修复说明。此后 M2 新增 27 项，当前全量为 221 passed；前端本次未变更也未重建，POSIX 分支仍待实机验收。
+历史记录为 172 passed，随后复验发现 D001（171 passed / 1 failed）。M1 修复阶段新增 22 项并达到 194 passed；重复运行与执行环境见 D001 修复说明。此后 M2 累计新增 40 项，当前全量为 234 passed；前端本次未变更也未重建，POSIX 分支仍待实机验收。
 
 ### M2：Agent Runtime（08-29）
 
-当前基础：具体 LLM HTTP 适配、按完整轮次保留消息的 Conversation、独立 StopController 与 ToolRegistry 已可单测；默认 Runtime 仍只发出未实现说明，没有模型调用或工具循环。
+当前基础：具体 LLM HTTP 适配、双总预算 Conversation、StopController 与 ToolRegistry 已接入默认 Runtime；模型配置完整时运行 Agent Loop，配置不完整时保持安全 scaffold。
 
 - [x] 已有 LLMClient / ModelReply / ToolCall 接口，以及六工具 Schema 生成与 ToolRegistry 分发。
 - [x] 已有 Conversation 完整轮次配对/最近轮次裁剪，StopController 步数与重复调用独立策略。
 - [x] 实现具体 LLM HTTP 适配、响应校验、超时/重试和资源关闭；原样复用既有工具 Schema。详见 [M2 说明](Coding%20Agent%20M2%20LLM%20HTTP%20适配说明.md)。
-- [ ] 实现上下文字符/token 总预算及结果裁剪整合；不重复实现已有工具层输出上限。
-- [ ] 将 Conversation、ToolRegistry、StopController 接入 Agent Loop，按调用 ID 回填结果。
+- [x] 实现上下文字符/token 总预算及模型侧结果裁剪整合；总量包含既有工具 Schema，不重复实现工具层输出上限。
+- [x] 将 Conversation、ToolRegistry、StopController 接入 Agent Loop，按调用 ID 和原顺序回填结果。
 - [ ] 发布真实 tool_started/tool_finished/file_changed/command_finished 事件并限制事件/历史体积。
-- [ ] 在 Runtime 执行步数/重复策略，补连续错误/超时恢复与终止语义。
+- [ ] 补充连续 LLM/Runtime 错误与连续命令超时的跨轮恢复阈值及终止语义。
 - [ ] 处理关闭时已开始的文件写入与命令取消，避免误以为取消协程会回滚文件。
-- [ ] 使用 Fake LLM 编写确定性循环测试，不消耗真实 API。
+- [x] 使用 Fake LLM 编写确定性循环测试，不消耗真实 API；覆盖读文件、修改、pytest 和最终回复。
 
 退出标准：Fake LLM 能按“读文件 -> 修改 -> 运行测试 -> 最终回复”完成一条可重复测试。
 
 ### M3：API 与 UI（08-30）
 
-- [x] 完成 TaskManager、创建/查询任务 API（当前接入占位 Runtime）。
+- [x] 完成 TaskManager、创建/查询任务 API；模型配置完整时接入 AgentRuntime，否则保留 scaffold 诊断模式。
 - [x] 完成事件历史回放与 SSE 订阅（包含游标、心跳及终态关闭）。
 - [x] 完成 Vue 输入、状态、通用 Timeline、最终结果区与六工具可用状态展示。
 - [x] 实现防重复提交、错误/断线提示、自动重连、手动查询/重连、事件 ID 去重和终态关闭。
@@ -71,7 +71,7 @@
 
 退出标准：浏览器能观察真实 Agent 从 task_started 到 task_completed/failed 的完整过程，包含实际工具、文件变化与命令结果，不能仅以占位失败链路验收。
 
-注意：框架仅验证 `task_started -> assistant_message -> task_failed(NOT_IMPLEMENTED)`；工具、Shell 和文件变化的真实载荷还未集成，因此 M3 整体不视为完成。
+注意：配置完整时已能完成真实 Agent Loop，但尚未发布 Tool/Shell/File Change 专用事件；配置不完整时仍是 `task_started -> assistant_message -> task_failed(NOT_IMPLEMENTED)`。因此 M3 整体不视为完成。
 
 ### M4：Demo 与可靠性（08-31）
 
@@ -96,9 +96,9 @@
 
 | 层级 | 方法 | 必测内容 |
 |---|---|---|
-| 单元/工具集成 | pytest | Workspace、文件读写、命令生命周期、LLM HTTP、StopController、完整轮次裁剪；221 项，含 D001 的 22 项与 M2 的 27 项新回归 |
+| 单元/工具集成 | pytest | Workspace、文件读写、命令生命周期、LLM HTTP、上下文预算、StopController 与 Agent Loop；234 项，含 D001 的 22 项与 M2 的 40 项新回归 |
 | 无模型工具流程 | tests/test_shell_tools.py / test_command_bytecode.py | 真实写入、pytest 失败、替换与复验；固定时间戳旧缓存及重复执行验证 |
-| 组件（待实现） | Fake LLM | tool call 解析、结果回填、错误恢复、结束条件；不同于已有无模型工具流程 |
+| 组件 | Fake LLM | 调用 ID 回填、参数错误恢复、并行调用、预算裁剪、步数/重复停止和真实本地修复流程 |
 | API | FastAPI TestClient | 任务冲突、状态查询、事件格式和回放 |
 | 前端 | 构建 + 手工 smoke | 创建任务、Timeline、失败/完成、SSE 断线提示 |
 | E2E | 真实模型 + demo_workspace | 修改真实代码、运行真实测试、结果一致性 |
@@ -132,8 +132,8 @@
 - [ ] Agent 决策来自模型原生 tool calling。
 - [x] 六个工具均由本项目本地实现；完整稳定性另见下一项。
 - [x] 修复并验证 D001，全量测试通过；后续版本仍需重新验收。
-- [ ] Tool Result 确实回到下一轮模型输入。
-- [ ] 最大步骤、重复调用和命令超时可被证明。
+- [x] Tool Result 确实按调用 ID 回到下一轮模型输入。
+- [x] 最大步骤、重复调用和命令超时已有确定性测试证明。
 - [ ] Demo 中真实文件发生变化，真实测试从失败变为通过。
 - [ ] Timeline 与最终总结没有伪造或遗漏失败。
 - [ ] 仓库与交付材料不存在密钥。

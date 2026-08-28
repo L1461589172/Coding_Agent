@@ -1,6 +1,6 @@
 import asyncio
 
-from app.agent.runtime import RuntimeNotReady, TaskRunner
+from app.agent.runtime import AgentRuntimeError, RuntimeNotReady, TaskRunner
 from app.core.events import EventLog
 from app.models.task import Task, TaskError, TaskStatus, utc_now
 
@@ -16,9 +16,10 @@ class TaskCapacity(Exception):
 class TaskManager:
     """Single-event-loop manager. Use one Uvicorn worker; no cross-process locks."""
 
-    def __init__(self, runner: TaskRunner, max_tasks: int = 100) -> None:
+    def __init__(self, runner: TaskRunner, max_tasks: int = 100, mode: str = "scaffold") -> None:
         self.runner = runner
         self.max_tasks = max_tasks
+        self.mode = mode
         self.tasks: dict[str, Task] = {}
         self.logs: dict[str, EventLog] = {}
         self._active: str | None = None
@@ -30,7 +31,7 @@ class TaskManager:
             raise TaskBusy()
         if len(self.tasks) >= self.max_tasks:
             raise TaskCapacity()
-        task = Task(prompt=prompt)
+        task = Task(prompt=prompt, mode=self.mode)
         self.tasks[task.id] = task
         self.logs[task.id] = EventLog()
         self._active = task.id
@@ -53,10 +54,13 @@ class TaskManager:
             task.error = TaskError(
                 code="NOT_IMPLEMENTED",
                 message=(
-                    "框架检查完成，但编程任务未执行。"
-                    "请在 M1/M2 实现本地工具、LLM 客户端与 Agent Loop。"
+                    "Agent Loop 已就绪，但模型配置不完整；编程任务未执行。"
+                    "请设置 API Key、Base URL 和模型名后重启服务。"
                 ),
             )
+        except AgentRuntimeError as exc:
+            task.status = TaskStatus.FAILED
+            task.error = TaskError(code=exc.code, message=str(exc))
         except asyncio.CancelledError:
             task.status = TaskStatus.FAILED
             task.error = TaskError(code="SERVER_SHUTDOWN", message="Service is shutting down")

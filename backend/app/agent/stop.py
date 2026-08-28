@@ -3,7 +3,7 @@ from typing import Any, Literal
 
 
 class StopController:
-    """Deterministic policy to be called by the future loop before each action."""
+    """Deterministic policy used by the Agent Loop before each action."""
 
     def __init__(self, max_steps: int = 20) -> None:
         if max_steps < 1:

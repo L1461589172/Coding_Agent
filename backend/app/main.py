@@ -7,6 +7,8 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app import __version__
+from app.agent.context import ContextBudget
+from app.agent.llm import OpenAICompatibleLLMClient
 from app.agent.runtime import AgentRuntime, TaskRunner
 from app.api.routes import router
 from app.core.config import Settings
@@ -22,13 +24,35 @@ def create_app(settings: Settings | None = None, runner: TaskRunner | None = Non
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        llm = (
+            OpenAICompatibleLLMClient.from_settings(config)
+            if runner is None and config.model_configured
+            else None
+        )
+        runtime = runner or AgentRuntime(
+            workspace,
+            tools,
+            llm,
+            max_steps=config.max_steps,
+            context_budget=ContextBudget(
+                max_characters=config.context_max_characters,
+                max_tokens=config.context_max_tokens,
+                max_tool_result_characters=config.tool_result_max_characters,
+            ),
+            recent_rounds=config.context_recent_rounds,
+        )
+        ready = runner is not None or runtime.ready
         app.state.workspace = workspace
         app.state.tools = tools
-        app.state.tasks = TaskManager(runner or AgentRuntime(workspace, tools), config.max_tasks)
+        app.state.agent_ready = ready
+        app.state.mode = "agent" if ready else "scaffold"
+        app.state.tasks = TaskManager(runtime, config.max_tasks, app.state.mode)
         try:
             yield
         finally:
             await app.state.tasks.close()
+            if runner is None:
+                await runtime.close()
 
     app = FastAPI(title="Coding Agent", version=__version__, lifespan=lifespan)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1"])
@@ -48,7 +72,12 @@ def create_app(settings: Settings | None = None, runner: TaskRunner | None = Non
 
     @app.get("/health")
     async def health() -> dict:
-        return {"status": "ok", "version": __version__, "mode": "scaffold", "agent_ready": False}
+        return {
+            "status": "ok",
+            "version": __version__,
+            "mode": app.state.mode,
+            "agent_ready": app.state.agent_ready,
+        }
 
     @app.get("/")
     async def root() -> dict:

@@ -1,6 +1,6 @@
 # Coding Agent M2 LLM HTTP 适配说明
 
-日期：2026-08-28。范围：完成 M2 第一项——OpenAI-compatible Chat Completions HTTP 适配、响应校验、超时/有限重试和资源关闭；没有提前实现 Agent Loop、上下文总预算或工具事件。
+日期：2026-08-28。范围：记录 M2 第一项——OpenAI-compatible Chat Completions HTTP 适配、响应校验、超时/有限重试和资源关闭。此后上下文预算与 Agent Loop 已实现，见 [后续说明](Coding%20Agent%20M2%20上下文预算与%20Agent%20Loop%20说明.md)；本文 221 项验证数字保留该阶段原意。
 
 ## 1. 实现结果
 
@@ -56,10 +56,10 @@
 
 本轮不调用真实模型，使用 `httpx.MockTransport` 做确定性协议测试。LLM 客户端及 Agent 契约针对性验证为 31 passed；全量为 **221 passed, 1 warning**。Ruff lint、41 个 Python 文件格式检查和 `pip check` 通过。warning 仍是既有 Starlette TestClient/httpx 弃用提示；本轮没有升级依赖，也没有重跑前端构建或浏览器 smoke。
 
-## 6. 尚未完成
+## 6. 后续状态与尚未完成
 
-- 默认 `AgentRuntime` 仍是 scaffold，不创建或调用该客户端；网页任务仍以 `NOT_IMPLEMENTED` 结束。
-- Conversation 上下文总预算、工具结果回填、StopController 接入、连续 Runtime 错误策略和工具事件属于后续 M2/M3。
+- 默认 `AgentRuntime` 现已在模型配置完整时创建并调用该客户端；配置不完整时仍保持 scaffold/`NOT_IMPLEMENTED` 安全降级。
+- Conversation 上下文总预算、工具结果回填和 StopController 基础策略现已接入；连续 Runtime 错误策略和工具事件仍属于后续 M2/M3。
 - 尚未对任何真实供应商或 OpenAI-compatible 网关做联网验收；不同供应商的非标准字段兼容性需要在 M4 真实模型阶段验证。
 - 当前只支持非流式 Chat Completions 原生 function tool calling；Responses API、旧 `function_call`、自定义工具和流式增量解析不在本阶段范围。
 

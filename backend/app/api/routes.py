@@ -16,8 +16,8 @@ async def metadata(request: Request) -> dict:
     # Whitelist public configuration; never serialize Settings.
     return {
         "workspace": request.app.state.workspace.root.name,
-        "mode": "scaffold",
-        "agent_ready": False,
+        "mode": request.app.state.mode,
+        "agent_ready": request.app.state.agent_ready,
         "tools": [s["function"]["name"] for s in request.app.state.tools.schemas()],
         "tool_statuses": request.app.state.tools.availability(),
     }

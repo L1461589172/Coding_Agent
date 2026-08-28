@@ -7,7 +7,7 @@ from app.main import create_app
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Coding Agent foundation (execution disabled)")
+    parser = argparse.ArgumentParser(description="Local coding agent with native tool calling")
     parser.add_argument("workspace", help="Existing directory authorized as the workspace")
     parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
