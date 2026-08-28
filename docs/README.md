@@ -1,6 +1,6 @@
 # 文档导航与当前代码状态
 
-更新日期：2026-08-28。M3 API/UI 已完整收口：在 M2 Agent Runtime 基础上完成真实事件专用卡片、严格前端契约、整页刷新恢复以及断线/重启/大载荷/终态一致性验证；不改变运行依赖或原始需求 PDF。
+更新日期：2026-08-28。M4 Demo 与可靠性已收口：真实模型在固定 Bug Demo 上连续 3/3 成功，Agent pytest 与独立复验均通过；M1–M3 能力继续保持。
 
 ## 阅读顺序
 
@@ -12,6 +12,7 @@
 | [M2 LLM HTTP 适配说明](Coding%20Agent%20M2%20LLM%20HTTP%20适配说明.md) | 当前模型请求、响应校验、超时/重试、错误与资源关闭契约 |
 | [M2 上下文预算与 Agent Loop 说明](Coding%20Agent%20M2%20上下文预算与%20Agent%20Loop%20说明.md) | 总预算、模型侧结果裁剪、调用 ID 回填、停止规则和应用组装 |
 | [M3 API 与 UI 完成说明](Coding%20Agent%20M3%20API%20与%20UI%20完成说明.md) | Tool/Shell/File Change 卡片、运行时契约校验、SSE 与整页恢复、终态一致性 |
+| [M4 Demo 与可靠性完成说明](Coding%20Agent%20M4%20Demo%20与%20可靠性完成说明.md) | 真实 Bug 样例、Prompt 调优、三轮真实模型指标、双重 pytest 验收 |
 | [D001 修复说明](Coding%20Agent%20D001%20修复说明.md) | 命令级字节码缓存策略、确定性回归、重复运行记录与三类缓存/权限问题区分 |
 | [M1 只读工具实现说明](Coding%20Agent%20M1%20只读工具实现说明.md) | 当前只读工具参考；首次实现清单和 104 项测试属于历史阶段 |
 | [基础框架修改说明](Coding%20Agent%20基础框架修改说明.md) | M0 历史记录；当时的“工具未实现”和 35 项测试不代表当前状态 |
@@ -24,9 +25,10 @@
 |---|---|---|
 | M0 工程基础 | CLI、FastAPI、Vue、任务/SSE 链路；已有本地阶段提交 | 打包与单端口交付，不等于真实 Agent |
 | M1 工具 | 六工具可独立调用且已接入 Runtime；路径守卫、原子写入、唯一替换、Diff、受限命令与清理；D001 已修复 | POSIX 实机验收 |
-| M2 Runtime | HTTP 客户端；双总预算与结果裁剪；Agent Loop/ID 回填；真实工具事件及历史限制；有界恢复；关闭中写入/命令清理 | 已完成，真实供应商验收归 M4 |
+| M2 Runtime | HTTP 客户端；双总预算与结果裁剪；Agent Loop/ID 回填；真实工具事件及历史限制；有界恢复；关闭中写入/命令清理 | 已完成并通过 M4 真实供应商验收 |
 | M3 API/UI | 创建/查询、严格响应校验、专用 Tool/Shell/File Change 卡片、有界重连、整页恢复与终态核对 | 已完成；跨进程持久化不在范围内 |
-| M4/M5 演示交付 | demo_workspace 占位 README、开发说明与测试基础 | 真实模型 Demo、稳定成功率、README.txt、视频与最终提交材料 |
+| M4 Demo | 初始失败的真实 Bug、可重复验收器、Prompt 调优；真实模型连续 3/3 成功 | 已完成；不外推为任意任务 100% 成功率 |
+| M5 交付 | 开发说明与测试基础 | README.txt、视频、密钥扫描与最终提交材料 |
 
 `/api/meta` 的六个 `tool_statuses` 均为 `ready`。模型三项配置完整时为 `agent_ready=true`、`mode=agent` 并运行真实 Loop；配置不完整时为 scaffold，任务以 `NOT_IMPLEMENTED` 结束且不执行工具。仍没有独立 HTTP 工具执行入口。
 
@@ -36,19 +38,20 @@
 
 | 检查 | 结果 |
 |---|---|
-| 源码清单 | 后端 30 个 Python 文件；前端 11 个源码文件、5 个入口/配置文件；14 个测试模块和 conftest.py |
-| pytest 收集 | 246 项（M2 收口 242 + M3 新增 4） |
-| 本轮全量复验 | **246 passed, 1 warning**；未调用真实模型 |
+| 源码清单 | 后端 30 个 Python 文件；前端 11 个源码文件、5 个入口/配置文件；15 个测试模块和 conftest.py；1 个 M4 真实验收脚本 |
+| pytest 收集 | 248 项（M3 收口 246 + M4 新增 2） |
+| 本轮全量复验 | **248 passed, 1 warning** |
+| M4 真实模型 | Prompt 调优后连续 3/3 成功；平均 12.537 秒，Agent/独立 pytest 均为 2 passed |
 | M3 API/UI 契约 | 新增 4 项：断线回放、大载荷、服务重启、成功/失败终态一致性 |
 | M2 Runtime 收口验证 | 新增 8 项事件/恢复/关闭测试；见 [Loop 说明](Coding%20Agent%20M2%20上下文预算与%20Agent%20Loop%20说明.md) |
 | M2 LLM 针对性验证 | LLM 客户端 26 项 + Agent 契约 5 项，共 31 passed；见 [M2 说明](Coding%20Agent%20M2%20LLM%20HTTP%20适配说明.md) |
 | D001 历史全量复验 | 连续三轮各 194 passed, 1 warning；见 [D001 修复说明](Coding%20Agent%20D001%20修复说明.md#4-验证记录) |
 | D001 针对性验证 | 新增 22 项 + 原无模型流程，共 23 passed；固定 mtime、等长修改、真实旧缓存与连续调用 |
-| Ruff lint | 45 个 Python 文件无缓存检查通过 |
+| Ruff lint | 后端、测试及 M4 验收脚本共 47 个 Python 文件无缓存检查通过 |
 | 前端类型/生产构建 | `vue-tsc --noEmit` 通过；Vite 25 modules、83.82 kB JS，在全新临时输出目录构建通过 |
 | 浏览器 smoke | 脚本已扩展整页刷新恢复；当前环境未安装可选 Playwright，未冒充已执行结果 |
 
-已有的 Starlette TestClient/httpx 弃用警告保留，未为消除它升级依赖。历史 172 passed、D001 发现时的 171 passed / 1 failed、D001 修复后的三轮 194 passed、HTTP 适配阶段的 221 passed、基础 Loop 阶段的 234 passed 及 M2 收口的 242 passed 均保留原意；当前结论基于 M3 收口后的 246 项全量验证。
+已有的 Starlette TestClient/httpx 弃用警告保留，未为消除它升级依赖。历史 172、171/1、194、221、234、242 和 M3 的 246 项均保留原意；当前结论基于 M4 收口后的 248 项确定性测试及独立三轮真实模型验收。
 
 ## 如何复验
 

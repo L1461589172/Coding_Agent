@@ -1,12 +1,12 @@
 # Coding Agent 项目结构与功能设计文档
 
-> 版本：v3.0（M3 API/UI 收口：专用卡片、严格契约与恢复语义）
+> 版本：v4.0（M4 真实 Demo 收口：Prompt 调优与三轮可靠性）
 >
 > 修订日期：2026-08-27
 >
 > 目标：在 2026-09-02 24:00 前交付一个能够完成真实编程任务、过程可解释、核心 Agent 逻辑自行实现的本地 MVP。
 
-> 阅读说明：当前 M3 API/UI 已收口。目标架构不等于当前行为；第 9/13 节描述实际代码。M1 六工具、M2 Runtime 及 M3 专用事件展示、严格前端契约和刷新恢复均已实现。文档索引和验证口径见 [docs/README](README.md)。
+> 阅读说明：当前 M4 已收口。目标架构不等于当前行为；第 9/13 节描述实际代码。M1–M3 能力均已实现，固定 Calculator Bug 的真实模型正式验收连续 3/3 成功。文档索引和验证口径见 [docs/README](README.md)。
 
 ## 1. 结论与修订摘要
 
@@ -23,14 +23,14 @@
 
 | 项目要求 | 设计响应 | 当前证据与缺口 |
 |---|---|---|
-| 个人独立设计并实现 coding agent | 自研 Loop、工具、上下文与停止策略 | 本地工具、上下文预算与基础 Agent Loop 已实现；真实供应商验收待完成 |
-| 自主读取/写入文件、执行命令 | 六个本地工具供 Runtime 调度 | 模型自主调用与专用 Tool/Shell/File Change 卡片已接入；真实供应商 Demo 待 M4 |
+| 个人独立设计并实现 coding agent | 自研 Loop、工具、上下文与停止策略 | 确定性测试完整；固定 Bug 的真实供应商 Demo 连续 3/3 成功 |
+| 自主读取/写入文件、执行命令 | 六个本地工具供 Runtime 调度 | 专用事件卡片已接入；真实模型 Calculator Demo 连续 3/3 成功 |
 | 禁止现成 Agent 框架/SDK | 使用通用 Web/HTTP 库和原生 tool calling | 依赖中未引入 Agent 框架；LLMClient 已使用 httpx 自行适配 Chat Completions |
 | 不依赖托管代码执行/文件工具 | 工具在本地 Workspace/进程执行 | tools 源码与真实工具测试已有；不是 OS 沙箱 |
 | 自行实现关键逻辑 | 本地管理 Conversation、Tool Dispatch、Stop、Recovery | 轮次配对、总预算、工具分发、Stop、有界错误恢复与关闭清理均已实现 |
 | API Key 不入库 | 环境变量读取、公开配置白名单 | Settings repr 隐藏密钥、通用错误不透出；完整历史/材料密钥扫描仍需交付前执行 |
 | 提交 Git 仓库、README.txt、视频 | 独立交付检查点 | 已有本地提交；最终 README.txt、视频、压缩包未生成，未核对远程公开状态 |
-| 面试能解释设计决策 | 模块与事件对应实际步骤 | 架构、Runtime 与事件 UI 说明已有；真实供应商决策链路待 M4 演示 |
+| 面试能解释设计决策 | 模块与事件对应实际步骤 | 架构、Runtime、事件 UI 和真实三轮轨迹指标均有记录 |
 
 ## 3. MVP 目标与非目标
 
@@ -369,7 +369,7 @@ backend/app/
 
 | 文件 | 功能简介 | 已实现的部分 | 待实现的部分 |
 |---|---|---|---|
-| [agent/runtime.py](../backend/app/agent/runtime.py) | Agent 执行入口 | 自研 LLM→Tool→Observation 循环；Schema 复用、调用 ID/顺序回填、真实工具事件、有界 LLM/Runtime/超时恢复、停止与取消事件 | 真实供应商调优属于 M4 |
+| [agent/runtime.py](../backend/app/agent/runtime.py) | Agent 执行入口 | 自研 LLM→Tool→Observation 循环；Schema 复用、调用 ID/顺序回填、真实工具事件、有界恢复；M4 Prompt 已按真实轨迹调优 | 继续用更复杂真实任务扩展成功率样本 |
 | [agent/llm.py](../backend/app/agent/llm.py) | 模型适配接口 | LLMClient 协议与 OpenAI-compatible 实现；鉴权、Schema 原样透传、严格响应/tool call 校验、安全错误、超时/有限重试、取消传播、资源所有权与幂等关闭；已接入 Runtime | 真实供应商兼容性验收；流式、Responses API 与旧 function_call 不在当前范围 |
 | [agent/context.py](../backend/app/agent/context.py) | 对话管理 | 保存/校验完整轮次；字符与估算 token 总预算；计入工具 Schema；最近轮次选择；模型侧 ToolResult 合法 JSON 裁剪；已接入 Runtime | 精确供应商 tokenizer 与自动摘要不在当前 P0 |
 | [agent/stop.py](../backend/app/agent/stop.py) | 确定性停止规则 | 最大决策轮、规范化重复、连续命令超时、连续工具基础设施错误与 LLM 错误计数均已接入 Runtime | 后续按真实 Demo 数据调优默认阈值 |
@@ -470,14 +470,15 @@ TaskManager / Runtime -> core/events.py（EventLog）
 | [tests/test_agent_contracts.py](../tests/test_agent_contracts.py) | 配置（含模型与预算环境变量）、Context 配对、Stop 独立策略、工具 Schema 与实际分发 | — |
 | [tests/test_llm_client.py](../tests/test_llm_client.py) | HTTP 请求/鉴权、六工具 Schema 复用、响应/tool call 校验、超时/HTTP 重试、取消、错误脱敏与关闭所有权 | 真实供应商联网兼容性验收不在确定性单测范围 |
 | [tests/test_context_budget.py](../tests/test_context_budget.py) | 字符/估算 token、工具 Schema 计量、完整轮次选择、ToolResult JSON 裁剪和显式超限 | 精确供应商 tokenizer 不在当前确定性估算范围 |
-| [tests/test_agent_runtime.py](../tests/test_agent_runtime.py) | Fake LLM 真实读/改/pytest/final；并行 ID、参数恢复、裁剪、步数/重复停止、应用组装/关闭 | 真实供应商验收仍待完成 |
+| [tests/test_agent_runtime.py](../tests/test_agent_runtime.py) | Fake LLM 真实读/改/pytest/final；并行 ID、参数恢复、裁剪、步数/重复停止、应用组装/关闭 | 真实供应商验收由 `scripts/run_m4_demo.py` 独立执行 |
 | [tests/test_events.py](../tests/test_events.py) | 实时订阅/历史回放、心跳、读者断开、终态禁止追加 | 多订阅者压力测试 |
 | [tests/test_m2_runtime_completion.py](../tests/test_m2_runtime_completion.py) | 事件 payload/历史限制与 410；真实文件/命令事件；连续错误阈值；关闭中写入与命令清理 | 真实供应商与前端专用卡片不在确定性单测范围 |
 | [tests/test_m3_api_ui_contracts.py](../tests/test_m3_api_ui_contracts.py) | 断线游标回放、大型专用事件、成功/失败终态一致性与服务重启 404 | 真实供应商和视觉回归属于后续/可选验收 |
 | [tests/test_task_manager.py](../tests/test_task_manager.py) | 创建后立即关闭、注入测试 Runner 的成功分支 | 默认 Runtime 完成/结构化失败另由 test_agent_runtime 覆盖 |
 | [scripts/smoke_browser.cjs](../scripts/smoke_browser.cjs) | 用可选 Playwright/Edge 检查 scaffold 提交、三事件、整页刷新恢复、未实现结果与窄屏布局 | 非真实模型 Agent 修复 E2E；专用卡片由类型/构建与 API 契约覆盖 |
 | [scripts/test.ps1](../scripts/test.ps1) | 使用仓库虚拟环境与独立随机临时/缓存目录运行 pytest，转发退出码 | 不自动删除历史临时目录；不支持 PowerShell 的平台使用等价 Python 命令 |
-| [demo_workspace/README.md](../demo_workspace/README.md) | 可指定的工作区占位说明 | 真实 Bug 源码、失败测试与重复演示数据尚未创建 |
+| [demo_workspace/README.md](../demo_workspace/README.md) | 可重复 Calculator Bug 工作区 | 初始 1 failed/1 passed；Agent 应只修改实现并使 2 项测试通过 |
+| [scripts/run_m4_demo.py](../scripts/run_m4_demo.py) | 真实模型重复验收器 | 每轮重置、基线失败、Task/SSE、测试哈希、Agent/独立 pytest 与终态核对 | 联网运行产生真实费用；报告写入被忽略的 output |
 
 根目录 [README.md](../README.md) 负责环境配置和运行说明；[基础框架修改说明](Coding%20Agent%20基础框架修改说明.md) 保存 M0 的交付与验证记录；[实施计划](Coding%20Agent%20实施计划.md) 负责里程碑和待办。正式提交用 `README.txt` 尚未创建，不将它列为已存在的源码文件。
 
@@ -489,7 +490,7 @@ TaskManager / Runtime -> core/events.py（EventLog）
 | M2：已实现 | M3 Timeline 已接收并专用展示真实工具事件 | HTTP/循环/回填/预算/Stop/恢复/关闭/事件限制均完成 | `runtime.py`、`stop.py`、`core/events.py` |
 | M3：已实现 | 专用 Tool/Shell/File Change 卡片、严格契约、有界重连和整页恢复已完成；统计可选 | 事件 API、历史窗口与终态契约已验证 | `App.vue`、`types.ts`、`api/client.ts`、`components/`；`tests/test_m3_api_ui_contracts.py` |
 | P1：Workspace / 静态托管 | 文件树、Code Viewer、Diff Viewer | 文件查询 API、前端静态产物托管 | 未来扩展 `components/`、`api/routes.py`、`main.py`；新增文件名尚未确定 |
-| M4：真实 Demo | 展示真实改动及测试结果 | 对真实项目完成探索、修改和验证 | `demo_workspace/` 及新增端到端测试 |
+| M4：已实现 | 展示真实改动、命令结果和终态；三轮 3/3 成功 | Calculator Bug 的 Agent/独立 pytest 双重验收已完成 | `demo_workspace/`、`scripts/run_m4_demo.py`、`tests/test_m4_demo.py` |
 
 多用户、并行任务、长期记忆和数据库持久化不因本表列出待办而自动纳入本轮范围。后续新增或完成文件时，应同时更新本节“已实现/待实现”列与实施计划，避免仅以存在同名文件判断功能完成。
 
@@ -535,7 +536,7 @@ TaskManager / Runtime -> core/events.py（EventLog）
 
 ## 12. 最终 Demo 路径
 
-以下为规划示例。当前 demo_workspace 只有占位 README，没有 divide 实现、失败测试或真实模型演示记录；单元测试临时创建的样例不是最终 Demo。
+以下路径已经实现。`demo_workspace` 在每轮验收前后恢复到初始失败状态，真实三轮指标见 M4 完成说明。
 
 ```text
 启动 coding-agent demo_workspace
@@ -550,18 +551,18 @@ TaskManager / Runtime -> core/events.py（EventLog）
 
 这个范围既满足题目对“编程智能体”的定义，也把时间投入集中在评委会追问的部分：Agent 为什么这样运行、每一步由谁决定、工具如何落地、错误怎样反馈、循环为何会停止。
 
-## 13. 当前实现状态（2026-08-28，M2 基础 Agent Loop 已接入）
+## 13. 当前实现状态（2026-08-28，M4 真实 Demo 已完成）
 
-功能设计章节描述目标，不代表全部完成；第 9 节与本节描述当前实现。基础 Agent 编程闭环已有 Fake LLM 确定性证据，真实模型、工具事件和 Demo 仍按实施计划推进。
+功能设计章节描述目标，不代表全部完成；第 9 节与本节描述当前实现。Agent 编程闭环同时具有 Fake LLM 确定性证据和固定 Bug 的真实模型三轮证据。
 
 - 启动：`coding-agent <workspace>` 已可用，固定监听 `127.0.0.1`、单 worker；Vue 独立启动于 5173。
 - API：实现 `/health`、`/api/meta`、创建/查询任务、任务 SSE；文件树和文件读取 API 尚未实现。
 - 状态：三项模型配置完整时进入 agent 模式并执行真实 Loop；配置不全时明确以 `FAILED / NOT_IMPLEMENTED` 结束且不操作工作区。
 - 工具：六种协议均已注册并绑定工作区，Runtime 通过原有 Schema/Registry 调用；结果按调用 ID 和顺序回填模型。
 - 只读边界：UTF-8 普通文件、固定忽略规则、拒绝链接、资源预算及截断元数据已实现；不是并发对抗环境下的强沙箱。
-- LLM：已实现 OpenAI-compatible Chat Completions 客户端并由 Runtime 调用；严格响应/tool call 校验、有限重试与资源关闭已有测试，真实供应商联网验收尚未进行。
+- LLM：OpenAI-compatible 客户端已通过真实供应商联网验收；严格响应/tool call 校验、有限重试与资源关闭继续由确定性测试覆盖。
 - 写入与命令：UTF-8 原子写入、唯一替换、Diff/哈希、精简环境、命令白名单、超时/输出预算/回收已实现；不代表命令内脚本被沙箱隔离。
-- 最新复验：M3 新增 4 项后全量 246 passed，Ruff（45 个 Python 文件）和前端严格类型/生产构建通过。M2 的 242、D001 三轮 194、HTTP 阶段 221 和基础 Loop 阶段 234 等历史保留原意；未运行真实模型任务。
+- 最新复验：全量 248 passed，Ruff 覆盖后端/测试/M4 脚本，前端严格类型/生产构建通过；真实模型正式三轮 3/3 成功，平均 12.537 秒。历史阶段数字保留原意。
 - D001：每命令新建 PYTHONPYCACHEPREFIX 并固定禁写字节码，普通 Python 子进程继承；不删除工作区已有缓存，命令结束后清理本次目录。该策略增加冷导入开销，也不是对主动覆盖环境或 sys.modules 热重载的保证。
 - 上下文与终止：字符/估算 token 双总预算计入工具 Schema；最近完整轮次、模型侧结果裁剪、决策轮/重复停止及连续 LLM/Runtime/命令超时阈值均已接入。
 - EventBus 在代码中以每任务 `EventLog` 实现。事件 `id` 是任务内单调递增数字字符串，用于 `Last-Event-ID` / `after` 续传；历史有体积/数量上限，过期游标返回 410，终态已读完返回 204。

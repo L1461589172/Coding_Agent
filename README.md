@@ -2,7 +2,7 @@
 
 本地自主编程智能体：Vue 3 + TypeScript + FastAPI，自研 Agent Loop，不使用 Agent 框架/SDK 或托管代码执行工具。
 
-> M1 六工具、M2 Agent Runtime 与 M3 API/UI 已完成：配置 OpenAI-compatible 模型后，可在双总预算内自主调用工具、按调用 ID 回填结果，并通过专用卡片观察真实工具、文件与命令事件；页面支持有界重连和整页恢复。真实模型 Demo 仍待完成。
+> M1 六工具、M2 Agent Runtime、M3 API/UI 与 M4 Demo 已完成：真实模型在固定 Bug Demo 上连续 3/3 成功，模型自主检查、最小修改并运行 pytest，页面可观察完整真实事件。
 
 ## 环境要求
 
@@ -65,7 +65,7 @@ Set-Location 'D:\Coding_Agent'
 
 两种方式任选其一，**不要同时启动**。默认后端为 `http://127.0.0.1:8000`，只监听本机、只使用一个 worker。看到 Uvicorn 的运行提示后保持此终端开启。
 
-`demo_workspace` 是当前命令目录下的工作区，目前仅含占位说明。也可指定自己的已有项目目录，路径含空格时保留引号：
+`demo_workspace` 包含一个初始测试失败的最小 Calculator Bug，可直接用于真实 Agent 演示。也可指定自己的已有项目目录，路径含空格时保留引号：
 
 ```powershell
 .\.venv\Scripts\coding-agent.exe 'D:\Projects\My Project'
@@ -244,7 +244,7 @@ $pytestRunDir = Join-Path $env:TEMP ("coding-agent-pytest-" + [guid]::NewGuid().
 
 按实际克隆位置调整上述绝对路径。pytest 会清空 `--basetemp`：必须使用新建的专用随机路径，不能指定项目根目录或已有数据目录。脚本不删除旧测试目录；运行记录保留在系统临时目录，便于检查失败样例。
 
-当前在 Windows/Python 3.12 下全量 **246 项测试通过**：包含 M1 的真实命令/D001 回归、M2 Runtime，以及 M3 的断线游标回放、大载荷、服务重启和终态一致性契约。模型测试使用 MockTransport/Fake LLM，不消耗真实 API。详细记录见 [M3 说明](docs/Coding%20Agent%20M3%20API%20与%20UI%20完成说明.md)、[M2 Loop 说明](docs/Coding%20Agent%20M2%20上下文预算与%20Agent%20Loop%20说明.md) 与 [D001 修复说明](docs/Coding%20Agent%20D001%20修复说明.md)。保留既有 Starlette/httpx 弃用提示；前端严格类型检查与生产构建通过。
+当前在 Windows/Python 3.12 下全量 **248 项确定性测试通过**，并完成真实模型三轮 Demo（3/3 成功）。确定性模型测试继续使用 MockTransport/Fake LLM；真实 Demo 会产生供应商费用。详细记录见 [M4 说明](docs/Coding%20Agent%20M4%20Demo%20与%20可靠性完成说明.md)、[M3 说明](docs/Coding%20Agent%20M3%20API%20与%20UI%20完成说明.md) 与 [M2 Loop 说明](docs/Coding%20Agent%20M2%20上下文预算与%20Agent%20Loop%20说明.md)。保留既有 Starlette/httpx 弃用提示；前端严格类型检查与生产构建通过。
 
 三类机制应分开处理：`--basetemp` 隔离 pytest 临时目录及账户权限；`cache_dir` 管理 pytest 状态缓存；Python/pytest 字节码则由 `run_command` 为每次命令设置独立 `PYTHONPYCACHEPREFIX` 并禁写常规字节码。修复不删除工作区已有 `.pyc`，也不要求手动清缓存。该策略只作用于工具命令，不接管用户手动启动的 Python。
 
@@ -294,7 +294,7 @@ backend/app/
 frontend/src/   # Vue 任务输入、状态、时间线和 API 客户端
 tests/          # 不使用真实 LLM 的后端测试
 scripts/        # 独立临时目录测试脚本、可选浏览器检查
-demo_workspace/ # 演示任务占位目录
+demo_workspace/ # 初始 pytest 失败的可重复 Calculator Bug Demo
 docs/           # 设计、实施计划与修改说明
 ```
 
@@ -306,7 +306,7 @@ docs/           # 设计、实施计划与修改说明
 - 六个工具均已实现，可独立调用；写入只接受受限大小的 UTF-8 普通文件，替换必须唯一匹配。详细参数、错误码和示例见 M1 完成说明。
 - `run_command` 接受 Python/pytest、Node 工作区脚本、npm 本地脚本和 echo 等白名单入口，不解释管道/重定向。获准脚本仍可访问工作区外文件和网络，必须只运行可信项目。
 - 命令使用精简子进程环境、输出上限、超时、Windows Job Object/POSIX 进程组清理；Job Object 仅管理进程生命周期，不隔离文件和网络。POSIX 分支尚未在本轮实机验证。
-- LLM 客户端与 M2 Agent Loop 已接入；尚未做真实供应商验收或真实 Demo 成功率验证。
+- LLM 客户端与 Agent Loop 已通过真实供应商 Demo 验收；固定 Calculator Bug 在 Prompt 调优后连续 3/3 成功，具体指标不应外推为任意任务成功率。
 - Context 同时限制字符和估算 token，计入工具 Schema，按完整轮次保留最近记录；只裁剪模型侧 ToolResult，自动摘要仍不实现。
 - StopController 已执行决策轮上限、重复纠偏/停止、连续命令超时、连续工具基础设施错误与 Agent 级可恢复 LLM 错误阈值；页面仍没有用户任务取消入口。
 - Runtime 发布 `tool_started`、`tool_finished`、`file_changed`、`command_finished`；事件 payload 与每任务历史均有上限，过期重连游标返回 410。前端以专用卡片展示并逐类校验 payload。
@@ -316,6 +316,7 @@ docs/           # 设计、实施计划与修改说明
 
 ## 项目文档
 
+- [M4 Demo 与可靠性完成说明](docs/Coding%20Agent%20M4%20Demo%20与%20可靠性完成说明.md)：真实 Bug、Prompt 调优、三轮真实模型指标和独立复验。
 - [M3 API 与 UI 完成说明](docs/Coding%20Agent%20M3%20API%20与%20UI%20完成说明.md)：专用事件卡片、严格响应校验、SSE/整页恢复与终态一致性。
 - [M2 上下文预算与 Agent Loop 说明](docs/Coding%20Agent%20M2%20上下文预算与%20Agent%20Loop%20说明.md)：双总预算、结果裁剪、调用 ID 回填、真实事件、有界恢复、关闭语义和 Fake LLM 闭环。
 - [M2 LLM HTTP 适配说明](docs/Coding%20Agent%20M2%20LLM%20HTTP%20适配说明.md)：请求/响应契约、工具 Schema 复用、重试矩阵、安全错误与资源关闭。
@@ -326,4 +327,4 @@ docs/           # 设计、实施计划与修改说明
 - [实施计划](docs/Coding%20Agent%20实施计划.md)
 - [基础框架修改说明](docs/Coding%20Agent%20基础框架修改说明.md)
 
-`README.txt`、真实 Bug Demo、视频与提交压缩包属于后续里程碑，当前没有生成正式提交材料。
+`README.txt`、视频与提交压缩包属于 M5，当前没有生成正式提交材料；真实 Bug Demo 与三轮可靠性验收已完成。
