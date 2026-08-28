@@ -1,6 +1,6 @@
 # 文档导航与当前代码状态
 
-更新日期：2026-08-28。当前为 M2 LLM HTTP 适配工作区：在已完成的 M1/D001 基础上新增模型请求、响应校验、超时/有限重试、错误脱敏与资源关闭，不改变依赖、前端或原始需求 PDF。
+更新日期：2026-08-28。M2 Agent Runtime 已完整收口：在 M1/D001 基础上完成模型适配、上下文预算、Agent Loop、真实工具事件、有界恢复和关闭清理；不改变依赖、前端或原始需求 PDF。
 
 ## 阅读顺序
 
@@ -23,8 +23,8 @@
 |---|---|---|
 | M0 工程基础 | CLI、FastAPI、Vue、任务/SSE 链路；已有本地阶段提交 | 打包与单端口交付，不等于真实 Agent |
 | M1 工具 | 六工具可独立调用；路径守卫、原子写入、唯一替换、Diff、受限命令与清理；D001 已修复 | POSIX 实机验收；真实 Runtime 接入属于 M2 |
-| M2 Runtime | HTTP 客户端；字符/token 总预算及结果裁剪；Conversation/Registry/StopController Agent Loop；调用 ID 回填 | 工具事件、连续错误/超时恢复、关闭中写入语义 |
-| M3 API/UI | 创建/查询、SSE、输入/状态/通用 Timeline、去重、防重复提交与手动重连 | 真实工具事件、专用 Tool/Shell/Diff 卡片、长期恢复验收 |
+| M2 Runtime | HTTP 客户端；双总预算与结果裁剪；Agent Loop/ID 回填；真实工具事件及历史限制；有界恢复；关闭中写入/命令清理 | 已完成，真实供应商验收归 M4 |
+| M3 API/UI | 创建/查询、SSE、输入/状态/通用 Timeline、去重、防重复提交与手动重连；已接收真实工具事件 | 专用 Tool/Shell/Diff 卡片、长期恢复验收 |
 | M4/M5 演示交付 | demo_workspace 占位 README、开发说明与测试基础 | 真实模型 Demo、稳定成功率、README.txt、视频与最终提交材料 |
 
 `/api/meta` 的六个 `tool_statuses` 均为 `ready`。模型三项配置完整时为 `agent_ready=true`、`mode=agent` 并运行真实 Loop；配置不完整时为 scaffold，任务以 `NOT_IMPLEMENTED` 结束且不执行工具。仍没有独立 HTTP 工具执行入口。
@@ -35,17 +35,17 @@
 
 | 检查 | 结果 |
 |---|---|
-| 源码清单 | 后端 30 个 Python 文件；前端 8 个源码文件、5 个入口/配置文件；9 个测试模块和 conftest.py |
-| pytest 收集 | 234 项（历史 194 + M2 新增 40） |
-| 本轮全量复验 | **234 passed, 1 warning**；独立随机 pytest 临时/缓存目录，未调用真实模型 |
-| M2 上下文/Loop 针对性验证 | 新增 13 项；受影响组件/API 共 30 passed；见 [Loop 说明](Coding%20Agent%20M2%20上下文预算与%20Agent%20Loop%20说明.md) |
+| 源码清单 | 后端 30 个 Python 文件；前端 8 个源码文件、5 个入口/配置文件；13 个测试模块和 conftest.py |
+| pytest 收集 | 242 项（历史 194 + M2 新增 48） |
+| 本轮全量复验 | **242 passed, 1 warning**；未调用真实模型 |
+| M2 Runtime 收口验证 | 新增 8 项事件/恢复/关闭测试；见 [Loop 说明](Coding%20Agent%20M2%20上下文预算与%20Agent%20Loop%20说明.md) |
 | M2 LLM 针对性验证 | LLM 客户端 26 项 + Agent 契约 5 项，共 31 passed；见 [M2 说明](Coding%20Agent%20M2%20LLM%20HTTP%20适配说明.md) |
 | D001 历史全量复验 | 连续三轮各 194 passed, 1 warning；见 [D001 修复说明](Coding%20Agent%20D001%20修复说明.md#4-验证记录) |
 | D001 针对性验证 | 新增 22 项 + 原无模型流程，共 23 passed；固定 mtime、等长修改、真实旧缓存与连续调用 |
-| Ruff lint / format / pip check | 通过，43 个 Python 文件格式符合配置，依赖一致 |
+| Ruff lint / format / pip check | 通过，44 个 Python 文件格式符合配置，依赖一致 |
 | 前端构建、浏览器 smoke | 本次未重跑；此前阶段记录保留，不冒充本次复验结果 |
 
-已有的 Starlette TestClient/httpx 弃用警告保留，未为消除它升级依赖。历史 172 passed、D001 发现时的 171 passed / 1 failed、D001 修复后的三轮 194 passed 及 HTTP 适配阶段的 221 passed 均保留原意；当前结论基于 Loop 接入后的 234 项全量验证。
+已有的 Starlette TestClient/httpx 弃用警告保留，未为消除它升级依赖。历史 172 passed、D001 发现时的 171 passed / 1 failed、D001 修复后的三轮 194 passed、HTTP 适配阶段的 221 passed 及基础 Loop 阶段的 234 passed 均保留原意；当前结论基于 M2 收口后的 242 项全量验证。
 
 ## 如何复验
 

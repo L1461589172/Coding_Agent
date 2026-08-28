@@ -12,6 +12,7 @@ from app.agent.llm import OpenAICompatibleLLMClient
 from app.agent.runtime import AgentRuntime, TaskRunner
 from app.api.routes import router
 from app.core.config import Settings
+from app.core.events import EventLimits
 from app.services.tasks import TaskManager
 from app.tools.registry import create_registry
 from app.tools.workspace import Workspace
@@ -40,13 +41,25 @@ def create_app(settings: Settings | None = None, runner: TaskRunner | None = Non
                 max_tool_result_characters=config.tool_result_max_characters,
             ),
             recent_rounds=config.context_recent_rounds,
+            max_consecutive_llm_errors=config.max_consecutive_llm_errors,
+            max_consecutive_runtime_errors=config.max_consecutive_runtime_errors,
+            max_consecutive_command_timeouts=config.max_consecutive_command_timeouts,
         )
         ready = runner is not None or runtime.ready
         app.state.workspace = workspace
         app.state.tools = tools
         app.state.agent_ready = ready
         app.state.mode = "agent" if ready else "scaffold"
-        app.state.tasks = TaskManager(runtime, config.max_tasks, app.state.mode)
+        app.state.tasks = TaskManager(
+            runtime,
+            config.max_tasks,
+            app.state.mode,
+            EventLimits(
+                max_payload_characters=config.event_max_payload_characters,
+                max_history_characters=config.event_max_history_characters,
+                max_history_events=config.event_max_history_events,
+            ),
+        )
         try:
             yield
         finally:

@@ -1,6 +1,6 @@
 # Coding Agent M2 上下文预算与 Agent Loop 说明
 
-日期：2026-08-28。范围：完成 M2 的上下文字符/token 总预算、模型侧 ToolResult 裁剪，以及 Conversation、ToolRegistry、StopController、LLMClient 的 Agent Loop 集成。工具专用事件、连续超时/LLM 错误恢复和关闭时文件写入语义仍属于后续任务。
+日期：2026-08-28。范围：完整收口 M2 Agent Runtime，包括上下文字符/token 总预算、模型侧 ToolResult 裁剪、Agent Loop、真实工具事件、有界错误恢复，以及关闭期间文件写入与命令清理语义。
 
 ## 1. 上下文总预算
 
@@ -64,33 +64,63 @@ assistant 消息使用 OpenAI 原生 function tool call 结构；参数以稳定
 - 再次重复（第四次）返回结构化 `REPEATED_TOOL_CALL` 任务失败。
 - 同一模型响应中的调用 ID 为空或重复、无工具调用且最终文本为空，返回 `INVALID_MODEL_REPLY`。
 - 客户端的安全 `LLMError` 和上下文预算错误会转换为稳定任务错误，不回显底层响应或异常。
+- 可恢复 `LLMError` 在客户端内部重试耗尽后，Runtime 最多容忍连续 3 次失败；前两次使用完全相同的 Context 做 Agent 级恢复，达到阈值返回 `CONSECUTIVE_LLM_ERRORS`。非可恢复错误立即失败。
+- 连续 3 个 `COMMAND_TIMEOUT` 返回 `CONSECUTIVE_COMMAND_TIMEOUTS`；中间出现其他结果会重置计数。
+- 连续 3 个工具基础设施错误（`TOOL_ERROR`、`IO_ERROR`、`PERMISSION_DENIED`、`COMMAND_START_FAILED`、`COMMAND_CLEANUP_FAILED`）返回 `CONSECUTIVE_RUNTIME_ERRORS`。参数、路径、命令非零等可由模型修正的错误不误计为基础设施故障。
 
-连续命令超时、连续 LLM 错误的跨轮恢复阈值仍未实现；本阶段没有把“客户端内部 HTTP 重试”误写成 Agent 级恢复。
+三个连续错误阈值均可通过环境变量修改，且必须为正整数。客户端 HTTP 重试与 Runtime 的 Agent 级连续失败计数是两层独立机制。
 
-## 5. 应用组装与资源
+## 5. 工具事件与历史限制
+
+每次实际或重复纠偏工具调用都会发布带相同 `call_id` 和决策轮 `step` 的 `tool_started`、`tool_finished`。写入确实改变文件时追加 `file_changed`；命令进入受监管执行器并形成结果时追加 `command_finished`。
+
+- `tool_started` 包含工具名、调用 ID 与参数；文件内容及替换文本只记录字符数，不复制到事件历史。
+- `tool_finished` 包含结构化 ToolResult、成功状态、错误码、截断状态和 Runtime 实测耗时。
+- `file_changed` 包含路径、动作、前后字节数与哈希、受限 Diff 和清理状态。
+- `command_finished` 包含命令、退出码、终止原因、清理状态及已有工具层有界 stdout/stderr。
+
+`EventLog` 再施加单 payload 12,000 字符、每任务历史 256,000 字符和 512 事件三项默认上限。超大 payload 会转换为合法 JSON 预览信封；历史超限淘汰最旧事件，但 ID 继续单调递增。首次 `after=0` 可读取仍保留的窗口；显式续传游标早于窗口时 API 返回 HTTP 410，避免静默伪装成无丢失回放。
+
+相关配置：
+
+| 环境变量 | 默认值 |
+|---|---:|
+| `CODING_AGENT_EVENT_MAX_PAYLOAD_CHARACTERS` | 12000 |
+| `CODING_AGENT_EVENT_MAX_HISTORY_CHARACTERS` | 256000 |
+| `CODING_AGENT_EVENT_MAX_HISTORY_EVENTS` | 512 |
+| `CODING_AGENT_MAX_CONSECUTIVE_LLM_ERRORS` | 3 |
+| `CODING_AGENT_MAX_CONSECUTIVE_RUNTIME_ERRORS` | 3 |
+| `CODING_AGENT_MAX_CONSECUTIVE_COMMAND_TIMEOUTS` | 3 |
+
+## 6. 应用组装、关闭与取消
 
 仅当 `CODING_AGENT_API_KEY`、`CODING_AGENT_BASE_URL`、`CODING_AGENT_MODEL` 三项均非空时，默认应用创建 LLM 客户端并报告 `mode=agent`、`agent_ready=true`。配置不完整时保持 `mode=scaffold`，提交任务以 `NOT_IMPLEMENTED` 失败且不执行任何工具。注入测试 Runner 时不额外创建无用 HTTP 客户端。
 
-应用关闭顺序是先取消/等待活动任务，再关闭 Runtime 拥有的 LLM 客户端；已有 `run_command` 取消与进程树回收语义保持不变。
+应用关闭顺序是先取消并等待活动任务，再关闭 Runtime 拥有的 LLM 客户端。`run_command` 收到取消后等待 Windows Job Object/POSIX 进程组及管道、临时字节码目录清理完成，再传播取消。
 
-## 6. 修改与验证
+文件写入使用线程执行，线程不能被协程安全中断。`write_file`/`replace_in_file` 现在与命令相同地保留操作所有权：关闭取消到达后，等待原子写入提交或失败完全落定，随后才传播取消并发布 `SERVER_SHUTDOWN`。取消不会回滚已经完成的原子替换；事件会明确说明该语义，避免终态出现后文件仍在后台变化。
+
+## 7. 修改与验证
 
 | 文件 | 修改内容 |
 |---|---|
 | [agent/context.py](../backend/app/agent/context.py) | 双预算估算、工具 Schema 计量、完整轮次选择、模型侧结果裁剪 |
-| [agent/runtime.py](../backend/app/agent/runtime.py) | 自研 Agent Loop、调用 ID 回填、停止规则与安全错误 |
-| [core/config.py](../backend/app/core/config.py) | 上下文/结果/轮次配置与模型配置就绪判断 |
+| [agent/runtime.py](../backend/app/agent/runtime.py) | Agent Loop、真实工具事件、调用 ID 回填、有界恢复与取消事件 |
+| [agent/stop.py](../backend/app/agent/stop.py) | 重复、步数、LLM/Runtime 错误和命令超时计数 |
+| [core/events.py](../backend/app/core/events.py) | payload/历史双体积与事件数限制、稳定 ID、过期游标判断 |
+| [core/config.py](../backend/app/core/config.py) | 上下文、事件与连续错误阈值配置 |
 | [main.py](../backend/app/main.py) | 按配置组装 Runtime/LLM，动态 mode/agent_ready，关闭资源 |
-| [services/tasks.py](../backend/app/services/tasks.py) | agent 模式任务与结构化 Runtime 错误 |
-| [api/routes.py](../backend/app/api/routes.py) | 返回实际 mode 与 agent_ready |
+| [services/tasks.py](../backend/app/services/tasks.py) | agent 模式任务、受限 EventLog 与结构化 Runtime 错误 |
+| [api/routes.py](../backend/app/api/routes.py) | 实际 mode/ready 与过期 SSE 游标 410 |
+| [tools/files.py](../backend/app/tools/files.py) | 取消时等待线程内原子写入落定 |
 | [test_context_budget.py](../tests/test_context_budget.py) | 字符/token、Schema、完整轮次、结果裁剪和超限测试 |
 | [test_agent_runtime.py](../tests/test_agent_runtime.py) | Fake LLM 闭环、并行 ID、错误恢复、停止策略、应用组装 |
+| [test_m2_runtime_completion.py](../tests/test_m2_runtime_completion.py) | 工具事件、历史限制、有界恢复、写入与命令关闭验收 |
 
-新增 13 项确定性测试；受影响组件/API 针对性验证 30 passed。当前全量 **234 passed, 1 warning**，Ruff lint 与 43 个 Python 文件格式检查通过，`pip check` 通过。测试不调用真实模型；真实工具闭环确实完成“读取错误实现 → 唯一替换 → 执行 pytest → 最终回复”。warning 仍是既有 Starlette TestClient/httpx 弃用提示。
+M2 在 234 项基础上新增 8 项收口测试，当前全量 **242 passed, 1 warning**；Ruff lint 与 44 个 Python 文件格式检查通过，`pip check` 通过。测试不调用真实模型；真实工具闭环完成“读取错误实现 → 唯一替换 → 执行 pytest → 最终回复”，关闭测试则实际等待原子写入并清理受监管命令进程。warning 仍是既有 Starlette TestClient/httpx 弃用提示。
 
-## 7. 尚未完成
+## 8. M2 之后的工作
 
-- `tool_started`、`tool_finished`、`file_changed`、`command_finished` 真实事件及事件/历史体积限制。
-- 连续 LLM/Runtime 错误和连续命令超时的跨轮恢复策略。
-- 关闭时已经开始的文件写入语义与更完整的取消验收。
-- 真实供应商联网测试、真实 Demo 连续成功率和前端专用工具卡片。
+- M3：前端专用 Tool/Shell/File Change 卡片、整页恢复和长期断线/真实大载荷验收。
+- M4：真实供应商联网兼容性、真实 Demo 连续成功率及针对实际模型行为的 Prompt/参数调优。
+- M5：最终材料、密钥扫描、视频与提交发布。

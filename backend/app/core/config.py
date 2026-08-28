@@ -17,6 +17,12 @@ class Settings:
     context_max_tokens: int = 20_000
     tool_result_max_characters: int = 12_000
     context_recent_rounds: int = 8
+    event_max_payload_characters: int = 12_000
+    event_max_history_characters: int = 256_000
+    event_max_history_events: int = 512
+    max_consecutive_llm_errors: int = 3
+    max_consecutive_runtime_errors: int = 3
+    max_consecutive_command_timeouts: int = 3
     max_steps: int = 20
     max_tasks: int = 100
     port: int = 8000
@@ -39,6 +45,23 @@ class Settings:
             raise ValueError("tool_result_max_characters must be at least 256")
         if self.context_recent_rounds < 1:
             raise ValueError("context_recent_rounds must be positive")
+        if self.event_max_payload_characters < 256:
+            raise ValueError("event_max_payload_characters must be at least 256")
+        if self.event_max_history_characters < self.event_max_payload_characters + 1_024:
+            raise ValueError(
+                "event_max_history_characters must cover one payload and its event envelope"
+            )
+        if self.event_max_history_events < 1:
+            raise ValueError("event_max_history_events must be positive")
+        if (
+            min(
+                self.max_consecutive_llm_errors,
+                self.max_consecutive_runtime_errors,
+                self.max_consecutive_command_timeouts,
+            )
+            < 1
+        ):
+            raise ValueError("Consecutive error thresholds must be positive")
         if not 1 <= self.port <= 65535:
             raise ValueError("port must be between 1 and 65535")
 
@@ -60,6 +83,24 @@ class Settings:
                 environ.get("CODING_AGENT_TOOL_RESULT_MAX_CHARACTERS", "12000")
             ),
             context_recent_rounds=int(environ.get("CODING_AGENT_CONTEXT_RECENT_ROUNDS", "8")),
+            event_max_payload_characters=int(
+                environ.get("CODING_AGENT_EVENT_MAX_PAYLOAD_CHARACTERS", "12000")
+            ),
+            event_max_history_characters=int(
+                environ.get("CODING_AGENT_EVENT_MAX_HISTORY_CHARACTERS", "256000")
+            ),
+            event_max_history_events=int(
+                environ.get("CODING_AGENT_EVENT_MAX_HISTORY_EVENTS", "512")
+            ),
+            max_consecutive_llm_errors=int(
+                environ.get("CODING_AGENT_MAX_CONSECUTIVE_LLM_ERRORS", "3")
+            ),
+            max_consecutive_runtime_errors=int(
+                environ.get("CODING_AGENT_MAX_CONSECUTIVE_RUNTIME_ERRORS", "3")
+            ),
+            max_consecutive_command_timeouts=int(
+                environ.get("CODING_AGENT_MAX_CONSECUTIVE_COMMAND_TIMEOUTS", "3")
+            ),
             max_steps=int(environ.get("CODING_AGENT_MAX_STEPS", "20")),
             port=port,
         )

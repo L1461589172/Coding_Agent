@@ -4,6 +4,7 @@ import pytest
 from app.agent.context import Conversation
 from app.agent.stop import StopController
 from app.core.config import Settings
+from app.tools.base import ToolResult
 from app.tools.registry import create_registry
 from app.tools.workspace import Workspace
 
@@ -27,6 +28,18 @@ def test_config_does_not_repr_secret(tmp_path):
         Settings(workspace=tmp_path, tool_result_max_characters=255)
     with pytest.raises(ValueError):
         Settings(workspace=tmp_path, context_recent_rounds=0)
+    with pytest.raises(ValueError):
+        Settings(workspace=tmp_path, event_max_payload_characters=255)
+    with pytest.raises(ValueError):
+        Settings(
+            workspace=tmp_path,
+            event_max_payload_characters=1_000,
+            event_max_history_characters=2_023,
+        )
+    with pytest.raises(ValueError):
+        Settings(workspace=tmp_path, event_max_history_events=0)
+    with pytest.raises(ValueError):
+        Settings(workspace=tmp_path, max_consecutive_llm_errors=0)
     assert not Settings(
         workspace=tmp_path,
         api_key=" ",
@@ -46,6 +59,12 @@ def test_model_policy_settings_from_env(tmp_path, monkeypatch):
     monkeypatch.setenv("CODING_AGENT_CONTEXT_MAX_TOKENS", "15000")
     monkeypatch.setenv("CODING_AGENT_TOOL_RESULT_MAX_CHARACTERS", "9000")
     monkeypatch.setenv("CODING_AGENT_CONTEXT_RECENT_ROUNDS", "6")
+    monkeypatch.setenv("CODING_AGENT_EVENT_MAX_PAYLOAD_CHARACTERS", "8000")
+    monkeypatch.setenv("CODING_AGENT_EVENT_MAX_HISTORY_CHARACTERS", "200000")
+    monkeypatch.setenv("CODING_AGENT_EVENT_MAX_HISTORY_EVENTS", "300")
+    monkeypatch.setenv("CODING_AGENT_MAX_CONSECUTIVE_LLM_ERRORS", "2")
+    monkeypatch.setenv("CODING_AGENT_MAX_CONSECUTIVE_RUNTIME_ERRORS", "4")
+    monkeypatch.setenv("CODING_AGENT_MAX_CONSECUTIVE_COMMAND_TIMEOUTS", "5")
     settings = Settings.from_env(str(tmp_path))
     assert settings.base_url == "https://model.example/v1"
     assert settings.model == "test-model"
@@ -56,6 +75,12 @@ def test_model_policy_settings_from_env(tmp_path, monkeypatch):
     assert settings.context_max_tokens == 15_000
     assert settings.tool_result_max_characters == 9_000
     assert settings.context_recent_rounds == 6
+    assert settings.event_max_payload_characters == 8_000
+    assert settings.event_max_history_characters == 200_000
+    assert settings.event_max_history_events == 300
+    assert settings.max_consecutive_llm_errors == 2
+    assert settings.max_consecutive_runtime_errors == 4
+    assert settings.max_consecutive_command_timeouts == 5
     assert settings.model_configured
     assert "environment-secret" not in repr(settings)
 
@@ -71,6 +96,22 @@ def test_repeat_and_step_limit():
         "stop",
     ]
     assert stop.observe("read", {"path": "b"}) == "continue"
+
+    recovery = StopController(
+        max_consecutive_llm_errors=2,
+        max_consecutive_runtime_errors=2,
+        max_consecutive_command_timeouts=2,
+    )
+    assert not recovery.observe_llm_error()
+    recovery.reset_llm_errors()
+    assert not recovery.observe_llm_error()
+    assert recovery.observe_result(ToolResult(ok=False, error_code="COMMAND_TIMEOUT")) is None
+    assert recovery.observe_result(ToolResult(ok=True)) is None
+    assert recovery.observe_result(ToolResult(ok=False, error_code="COMMAND_TIMEOUT")) is None
+    assert (
+        recovery.observe_result(ToolResult(ok=False, error_code="COMMAND_TIMEOUT"))
+        == "CONSECUTIVE_COMMAND_TIMEOUTS"
+    )
 
 
 def test_context_preserves_call_result_pairs():

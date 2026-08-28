@@ -1,12 +1,12 @@
 # Coding Agent 项目结构与功能设计文档
 
-> 版本：v2.7（M2 上下文总预算、结果裁剪与 Agent Loop）
+> 版本：v2.8（M2 Agent Runtime 收口：事件、恢复与关闭语义）
 >
 > 修订日期：2026-08-27
 >
 > 目标：在 2026-09-02 24:00 前交付一个能够完成真实编程任务、过程可解释、核心 Agent 逻辑自行实现的本地 MVP。
 
-> 阅读说明：当前为 M2 Agent Loop 接入后的工作区。目标架构不等于当前行为；第 9/13 节描述实际代码。M1 六工具、M2 HTTP、上下文预算与基础循环已实现，全量 234 passed；工具事件和连续错误恢复仍待完成。文档索引和验证口径见 [docs/README](README.md)。
+> 阅读说明：当前 M2 Agent Runtime 已收口。目标架构不等于当前行为；第 9/13 节描述实际代码。M1 六工具及 M2 HTTP、上下文预算、Agent Loop、真实事件、有界恢复和关闭清理均已实现，全量 242 passed。文档索引和验证口径见 [docs/README](README.md)。
 
 ## 1. 结论与修订摘要
 
@@ -24,7 +24,7 @@
 | 项目要求 | 设计响应 | 当前证据与缺口 |
 |---|---|---|
 | 个人独立设计并实现 coding agent | 自研 Loop、工具、上下文与停止策略 | 本地工具、上下文预算与基础 Agent Loop 已实现；真实供应商验收待完成 |
-| 自主读取/写入文件、执行命令 | 六个本地工具供 Runtime 调度 | 独立工具可执行；模型自主调用与 Timeline 工具事件未接入 |
+| 自主读取/写入文件、执行命令 | 六个本地工具供 Runtime 调度 | 模型自主调用与 Timeline 通用工具事件已接入；专用前端卡片待 M3 |
 | 禁止现成 Agent 框架/SDK | 使用通用 Web/HTTP 库和原生 tool calling | 依赖中未引入 Agent 框架；LLMClient 已使用 httpx 自行适配 Chat Completions |
 | 不依赖托管代码执行/文件工具 | 工具在本地 Workspace/进程执行 | tools 源码与真实工具测试已有；不是 OS 沙箱 |
 | 自行实现关键逻辑 | 本地管理 Conversation、Tool Dispatch、Stop、Recovery | 轮次配对、总预算、工具分发、Stop 与基础循环已实现；Recovery 尚未实现 |
@@ -138,18 +138,18 @@ Conversation 保存本任务的完整逻辑消息：system、user、assistant、
 - LLMClient 只负责请求/响应转换，不负责循环、工具执行或任务状态。
 - 超时、HTTP 错误、无效 JSON 和未知工具都转换为可观察错误；可恢复错误作为 Tool/Runtime Observation，超过重试阈值才失败。
 
-当前已实现客户端层能力，并已由 Agent Loop 调用：Bearer 鉴权、`/chat/completions` 非流式请求、既有工具 Schema 原样透传、严格 tool call 转换、安全错误、可配置超时/有限重试和幂等关闭。客户端错误会转换为结构化任务失败；跨轮连续错误恢复仍待实现。详见 [M2 HTTP 说明](Coding%20Agent%20M2%20LLM%20HTTP%20适配说明.md) 与 [Loop 说明](Coding%20Agent%20M2%20上下文预算与%20Agent%20Loop%20说明.md)。
+当前已实现客户端层能力，并已由 Agent Loop 调用：Bearer 鉴权、`/chat/completions` 非流式请求、既有工具 Schema 原样透传、严格 tool call 转换、安全错误、可配置超时/有限重试和幂等关闭。客户端错误会转换为结构化任务失败；可恢复错误另受 Agent 级连续失败阈值约束。详见 [M2 HTTP 说明](Coding%20Agent%20M2%20LLM%20HTTP%20适配说明.md) 与 [Loop 说明](Coding%20Agent%20M2%20上下文预算与%20Agent%20Loop%20说明.md)。
 
 ### 5.6 ToolRegistry
 
-当前 ToolRegistry 维护名称、Schema、handler，执行严格参数校验并返回工具结果，不发布事件，也不统一统计所有工具的耗时。M2 接入时的目标流程是：
+当前 ToolRegistry 维护名称、Schema、handler，执行严格参数校验并返回工具结果；事件和统一耗时由 Runtime 发布/统计：
 
 1. 检查工具是否注册。
 2. 校验参数类型和必填项。
 3. 由 Runtime/调度层发布 `tool_started`。
 4. 执行并捕获错误。
 5. 各工具已有读取/输出预算；Runtime 再控制整体上下文与事件体积。
-6. Runtime/调度层发布 `tool_finished`，成功变更时追加 `file_changed`，命令执行追加 `command_finished`；这些事件目前尚未接入。
+6. Runtime/调度层发布 `tool_finished`，成功变更时追加 `file_changed`，命令执行追加 `command_finished`；所有事件均受 payload/历史上限约束。
 
 六个 P0 工具：
 
@@ -191,9 +191,9 @@ Conversation 保存本任务的完整逻辑消息：system、user、assistant、
 
 事件类型：`task_started`、`assistant_message`、`tool_started`、`tool_finished`、`file_changed`、`command_finished`、`task_completed`、`task_failed`。
 
-示例用于展示信封，不表示当前默认 Runtime 已发出 tool_finished。id 为任务内递增数字字符串；当前 Agent Loop 会发出 task_started、assistant_message、task_completed 或 task_failed，但工具级事件仍待实现，step 目前默认为 0。
+默认 Runtime 已发布全部八类事件。id 为任务内单调递增数字字符串；工具事件的 step 是当前模型决策轮，任务级事件可保持 0。事件历史裁剪不会复用 ID。
 
-事件先写入该任务的内存历史，再通知 SSE 订阅者。浏览器断线重连时可先收到历史事件，避免演示时丢步骤。
+事件先写入该任务的受限内存历史，再通知 SSE 订阅者。浏览器断线重连时可先收到仍保留的历史事件；显式游标早于保留窗口时返回 410，不静默伪装成完整回放。
 
 ### 6.2 REST/SSE 接口
 
@@ -217,7 +217,7 @@ Conversation 保存本任务的完整逻辑消息：system、user、assistant、
 - 拼接 Workspace 后执行规范化/真实路径解析，再确认结果仍位于根目录内。
 - 新文件先校验其最近存在父目录的真实路径，避免符号链接逃逸。
 - 默认忽略或拒绝 `.git`、`.env`、密钥文件和依赖缓存目录。
-- 成功写入返回目标路径、Diff、哈希和结果；失败返回结构化错误。没有持久化审计日志，也尚未发布 file_changed 事件。
+- 成功写入返回目标路径、Diff、哈希和结果；失败返回结构化错误。Runtime 会发布受限 `file_changed` 事件，但没有持久化审计日志。
 
 ### 7.2 Shell 边界
 
@@ -256,7 +256,7 @@ M1 已实现 argv 白名单、精简环境、超时、输出预算，以及 Wind
 - **待实现**：尚未编写的行为，或已有逻辑尚未接入 Runtime；不等于要求现在新增一个文件。
 - 表格中的“无本阶段新增项”仅表示该辅助文件已满足当前职责，不表示整个模块或项目完成。
 
-模型配置完整时，网页任务已由 LLM 自主决策并执行基础 Agent Loop；配置不完整时仍以 `FAILED / NOT_IMPLEMENTED` 安全结束。当前 assistant 与终态事件可观察，但专用工具/文件/命令事件尚未发布，因此页面端到端展示仍未完成。D001 字节码缓存问题已修复并持续回归。
+模型配置完整时，网页任务由 LLM 自主决策并执行 Agent Loop；配置不完整时仍以 `FAILED / NOT_IMPLEMENTED` 安全结束。工具、文件与命令事件均已发布并能由通用 Timeline 展示；前端专用卡片仍属于 M3。D001 字节码缓存问题已修复并持续回归。
 
 M1 六工具既可独立通过注册表调用，也已由 Runtime 调度。只读语义见 [只读阶段说明](Coding%20Agent%20M1%20只读工具实现说明.md)，写入/命令见 [M1 工具系统完成说明](Coding%20Agent%20M1%20工具系统完成说明.md)，循环见 [M2 Loop 说明](Coding%20Agent%20M2%20上下文预算与%20Agent%20Loop%20说明.md)。
 
@@ -354,7 +354,7 @@ backend/app/
 | [main.py](../backend/app/main.py) | 应用工厂与依赖组装 | 创建 Workspace/Registry；配置完整时创建 LLM/AgentRuntime；动态 mode/ready；先关闭任务再关闭模型；注入测试 Runner 时不创建无用客户端 | Vue 静态产物托管；现有中间件不等于身份认证或系统沙箱 |
 | [api/routes.py](../backend/app/api/routes.py) | HTTP API 层 | 元数据、任务创建/查询、SSE；409/404/503 错误；游标检查、历史续传与终态 204 | 文件树/文件读取 API；不在本阶段的取消/历史/重试接口尚不存在 |
 | [core/config.py](../backend/app/core/config.py) | 集中配置 | 模型请求/连接/重试、字符/token/结果/轮次预算、max_steps、工作区/端口/Origin；三项模型配置就绪判断；密钥不进 repr | 部分模型配置当前按 scaffold 降级而非报错；不会自动加载 `.env` |
-| [core/events.py](../backend/app/core/events.py) | 事件存储和订阅 | 每任务内存 EventLog、递增 ID、Condition 通知、回放与等待、默认 15 秒心跳、终态拒绝追加 | 单事件/任务历史体积限制和敏感内容处理；持久化不在本阶段 |
+| [core/events.py](../backend/app/core/events.py) | 事件存储和订阅 | 每任务 EventLog、单调 ID、Condition 通知、回放/等待、心跳、终态关闭；单 payload、历史字符与事件数上限；过期游标判断 | 完整敏感内容识别与持久化不在本阶段 |
 | [models/task.py](../backend/app/models/task.py) | 任务数据模型 | TaskCreate 输入长度/空白/额外字段检查；四种状态、UUID、时间、结果、结构化错误与 scaffold 模式 | 真实步骤、验证结果、修改文件清单等字段；没有 CANCELLED 状态 |
 | [models/event.py](../backend/app/models/event.py) | 事件信封与编码 | 8 种事件名称、终态集合、时间/step/payload 字段；`as_sse()` 生成 ID 与单行 JSON | 各事件 payload 的专用模型、真实工具事件数据；SSE 编码位于此文件而非 events.py |
 | [services/tasks.py](../backend/app/services/tasks.py) | 任务生命周期 | 单活动任务、后台协程、默认 100 任务上限；agent/scaffold mode；Runtime 结构化错误、终态事件与关闭清理 | 持久化、用户取消和重试接口不在当前范围 |
@@ -363,18 +363,18 @@ backend/app/
 
 | 文件 | 功能简介 | 已实现的部分 | 待实现的部分 |
 |---|---|---|---|
-| [agent/runtime.py](../backend/app/agent/runtime.py) | Agent 执行入口 | 自研 LLM→Tool→Observation 循环；Schema 复用、调用 ID/顺序回填、参数错误恢复、步数/重复停止、安全错误和资源关闭 | 连续错误/命令超时恢复；工具专用事件；关闭中写入语义 |
+| [agent/runtime.py](../backend/app/agent/runtime.py) | Agent 执行入口 | 自研 LLM→Tool→Observation 循环；Schema 复用、调用 ID/顺序回填、真实工具事件、有界 LLM/Runtime/超时恢复、停止与取消事件 | 真实供应商调优属于 M4 |
 | [agent/llm.py](../backend/app/agent/llm.py) | 模型适配接口 | LLMClient 协议与 OpenAI-compatible 实现；鉴权、Schema 原样透传、严格响应/tool call 校验、安全错误、超时/有限重试、取消传播、资源所有权与幂等关闭；已接入 Runtime | 真实供应商兼容性验收；流式、Responses API 与旧 function_call 不在当前范围 |
 | [agent/context.py](../backend/app/agent/context.py) | 对话管理 | 保存/校验完整轮次；字符与估算 token 总预算；计入工具 Schema；最近轮次选择；模型侧 ToolResult 合法 JSON 裁剪；已接入 Runtime | 精确供应商 tokenizer 与自动摘要不在当前 P0 |
-| [agent/stop.py](../backend/app/agent/stop.py) | 确定性停止规则 | 最大决策轮与规范化重复识别已接入 Runtime；第三次回填纠偏 Observation，第四次结构化失败 | 连续命令超时与 LLM/Runtime 错误限制尚未实现 |
+| [agent/stop.py](../backend/app/agent/stop.py) | 确定性停止规则 | 最大决策轮、规范化重复、连续命令超时、连续工具基础设施错误与 LLM 错误计数均已接入 Runtime | 后续按真实 Demo 数据调优默认阈值 |
 | [tools/base.py](../backend/app/tools/base.py) | 通用工具契约 | 严格参数模型、ToolResult、异步 handler、ToolSpec/Schema 和 implemented 状态；六个工具使用统一成功/错误/截断信封 | output 目前仍是通用字典；后续增加工具事件的专用 payload 类型 |
 | [tools/registry.py](../backend/app/tools/registry.py) | 工具注册/分发 | 必须绑定 Workspace；六个真实 handler、Schema、严格参数校验和统一安全错误；已由 Runtime 调用并回填 Observation | 工具事件与全工具耗时统计；命令耗时已由 shell.py 返回 |
 | [tools/workspace.py](../backend/app/tools/workspace.py) | 工作区路径约束 | 根目录身份、真实路径及敏感/链接/Windows 歧义检查；文件读写和命令入口均使用；同一 Workspace 写操作锁、内部临时文件名过滤 | 不能消除所有检查后路径变化的竞争，也不隔离进程；不同 Workspace 对象不共享写锁 |
 | [tools/read_only.py](../backend/app/tools/read_only.py) | 共享只读基础设施 | ReadLimits、WalkState、受限且排序的深度优先遍历、协作式扫描时限、UTF-8/BOM 与普通文件检查、文件大小上限和打开后身份核验 | OS 级强隔离不在当前范围；固定忽略规则尚不解析 .gitignore |
-| [tools/files.py](../backend/app/tools/files.py) | 文件工具集合 | list_files/read_file 与写入/唯一替换的参数和线程 handler；替换检查包含重叠匹配，零次或多次均拒绝；调用 writes 完成变更 | Runtime 接入、file_changed 事件；多文件事务不在 MVP 范围 |
+| [tools/files.py](../backend/app/tools/files.py) | 文件工具集合 | list_files/read_file 与写入/唯一替换；取消时等待线程内原子提交或失败落定；替换含重叠匹配检查 | 多文件事务不在 MVP 范围 |
 | [tools/writes.py](../backend/app/tools/writes.py) | 文本变更基础设施 | 有界快照、写前冲突检查、同目录临时文件/fsync、原子替换/无覆盖创建、失败清理；BOM 保留、前后 SHA-256、受限单段统一 Diff | 不是跨进程 compare-and-swap；不保留所有 ACL/扩展属性，不提供回滚历史或多文件事务 |
 | [tools/search.py](../backend/app/tools/search.py) | 文本搜索工具 | 文件/目录范围内区分大小写的字面搜索；路径、行列号、片段；文件数/字节/输出上限与跳过统计，线程中执行 | Runtime 接入；正则表达式、非 UTF-8 编码和索引不在当前实现范围 |
-| [tools/shell.py](../backend/app/tools/shell.py) | 本地命令工具 | CommandLimits、固定 cwd、双流有界捕获、退出状态、超时/输出预算/取消、子进程清理；每命令创建并清理独立字节码前缀，修复 D001 | Runtime 与 command_finished 事件接入；没有交互终端、后台服务或流式 UI |
+| [tools/shell.py](../backend/app/tools/shell.py) | 本地命令工具 | CommandLimits、固定 cwd、双流有界捕获、退出状态、超时/输出预算/取消、子进程清理；每命令创建并清理独立字节码前缀，修复 D001；Runtime 已发布 command_finished | 没有交互终端、后台服务或流式 UI |
 | [tools/command_policy.py](../backend/app/tools/command_policy.py) | 命令策略 | 受限 argv、开发命令白名单、可信 PATH、环境白名单及固定 ComSpec；固定禁写 Python 字节码，配合 shell 的新缓存前缀 | 不分析脚本内容或插件行为，不能限制获准程序的文件/网络访问 |
 | [tools/command_worker.py](../backend/app/tools/command_worker.py) | 受控启动器 | Python -I 启动，等待父进程许可后才运行目标 argv；stdin 禁用、转发退出状态；目标程序继承 Job/进程组 | 不是独立用户接口，不应从不可信工作区替换本项目的运行时代码 |
 | [tools/windows_job.py](../backend/app/tools/windows_job.py) | Windows 进程树管理 | ctypes 封装 Job 创建、kill-on-close、分配、终止和句柄关闭；未获分配许可不启动用户命令 | 仅管理生命周期，不提供文件/网络沙箱；POSIX 路径由 shell.py 的进程组实现 |
@@ -427,7 +427,7 @@ TaskManager / Runtime -> core/events.py（EventLog）
                                       └── 最终结果区域（仍位于 App.vue）
 ```
 
-`main.py` 只在 API Key、Base URL、模型名齐全时创建 LLM 客户端并报告 agent ready；配置不全不会误执行工具。当前 Runtime 已使用 Conversation、LLMClient、StopController 和 Registry.execute，但尚未把每次工具调用发布为专用事件。
+`main.py` 只在 API Key、Base URL、模型名齐全时创建 LLM 客户端并报告 agent ready；配置不全不会误执行工具。Runtime 使用 Conversation、LLMClient、StopController 和 Registry.execute，并按调用 ID 发布每次工具、文件与命令事件。
 
 设计中的 EventBus 对应当前 `core/events.py` 的每任务 EventLog；不存在单独的 `event_bus.py`。Tool Call、Terminal、Diff 与最终结果目前也没有独立 Vue 文件，不能按目标功能名称推断它们已存在。
 
@@ -439,10 +439,10 @@ TaskManager / Runtime -> core/events.py（EventLog）
 | `GET /api/meta` | `api/routes.py` | client.getMetadata -> App 工作区与工具清单 | 已实现工作区/工具名称、tool_statuses 与实际 agent_ready |
 | `POST /api/tasks` | `api/routes.py`、`services/tasks.py` | TaskInput -> App -> client.createTask | agent 模式运行真实 Loop；scaffold 模式返回 NOT_IMPLEMENTED |
 | `GET /api/tasks/{id}` | `api/routes.py` | client.getTask -> App 状态/最终结果 | 已实现内存查询 |
-| `GET /api/tasks/{id}/events` | `api/routes.py`、`core/events.py` | client.watchTask -> App -> Timeline | 已实现回放/实时订阅；Agent 已发布逐轮 assistant 与终态，工具专用事件待接入 |
+| `GET /api/tasks/{id}/events` | `api/routes.py`、`core/events.py` | client.watchTask -> App -> Timeline | 已实现受限回放/实时订阅与全部真实工具事件；过期游标返回 410 |
 | `GET /api/workspace/tree` | 尚无路由 | 尚无文件树组件 | 待实现（P1），当前返回 404 |
 | `GET /api/workspace/file?path=...` | 尚无路由 | 尚无 Code Viewer | 待实现（P1），当前返回 404 |
-| Tool/Shell/File Change 专用事件 | 工具结果已实现；models/event.py 定义事件名称，Runtime 尚未发布 | Timeline 能展示通用 JSON | 工具层能力已存在，事件接入和专用展示待实现 |
+| Tool/Shell/File Change 专用事件 | Runtime 已发布结构化受限 payload | Timeline 能展示通用 JSON | M3 补专用卡片与样式 |
 
 `GET /` 的后端响应只是启动说明；`frontend/dist/` 即使已经构建，也不会自动由 FastAPI 托管。页面重连保留的是当前页面内的 task_id/事件游标，整页刷新后的任务恢复尚未实现。
 
@@ -464,8 +464,9 @@ TaskManager / Runtime -> core/events.py（EventLog）
 | [tests/test_agent_contracts.py](../tests/test_agent_contracts.py) | 配置（含模型与预算环境变量）、Context 配对、Stop 独立策略、工具 Schema 与实际分发 | — |
 | [tests/test_llm_client.py](../tests/test_llm_client.py) | HTTP 请求/鉴权、六工具 Schema 复用、响应/tool call 校验、超时/HTTP 重试、取消、错误脱敏与关闭所有权 | 真实供应商联网兼容性验收不在确定性单测范围 |
 | [tests/test_context_budget.py](../tests/test_context_budget.py) | 字符/估算 token、工具 Schema 计量、完整轮次选择、ToolResult JSON 裁剪和显式超限 | 精确供应商 tokenizer 不在当前确定性估算范围 |
-| [tests/test_agent_runtime.py](../tests/test_agent_runtime.py) | Fake LLM 真实读/改/pytest/final；并行 ID、参数恢复、裁剪、步数/重复停止、应用组装/关闭 | 真实供应商与工具专用事件验收仍待完成 |
-| [tests/test_events.py](../tests/test_events.py) | 实时订阅/历史回放、心跳、读者断开、终态禁止追加 | 大载荷、多订阅者和历史体积限制测试 |
+| [tests/test_agent_runtime.py](../tests/test_agent_runtime.py) | Fake LLM 真实读/改/pytest/final；并行 ID、参数恢复、裁剪、步数/重复停止、应用组装/关闭 | 真实供应商验收仍待完成 |
+| [tests/test_events.py](../tests/test_events.py) | 实时订阅/历史回放、心跳、读者断开、终态禁止追加 | 多订阅者压力测试 |
+| [tests/test_m2_runtime_completion.py](../tests/test_m2_runtime_completion.py) | 事件 payload/历史限制与 410；真实文件/命令事件；连续错误阈值；关闭中写入与命令清理 | 真实供应商与前端专用卡片不在确定性单测范围 |
 | [tests/test_task_manager.py](../tests/test_task_manager.py) | 创建后立即关闭、注入测试 Runner 的成功分支 | 默认 Runtime 完成/结构化失败另由 test_agent_runtime 覆盖 |
 | [scripts/smoke_browser.cjs](../scripts/smoke_browser.cjs) | 用 Playwright/Edge 检查框架提交、三事件、未实现结果与窄屏布局 | 非 Vue 组件单测，也不是 Agent 修复代码的 E2E；工具卡片和复杂断线场景待补 |
 | [scripts/test.ps1](../scripts/test.ps1) | 使用仓库虚拟环境与独立随机临时/缓存目录运行 pytest，转发退出码 | 不自动删除历史临时目录；不支持 PowerShell 的平台使用等价 Python 命令 |
@@ -478,8 +479,8 @@ TaskManager / Runtime -> core/events.py（EventLog）
 | 阶段 | 前端待实现 | 后端待实现 | 主要落点 |
 |---|---|---|---|
 | M1：已实现，D001 已修复 | 六工具就绪标签已有；真实结果卡片属于 M3 | 六工具、资源限制及独立字节码缓存已有；持续维护回归，POSIX 实机验收待完成 | `tools/command_policy.py`、`shell.py`、`tests/test_command_bytecode.py` |
-| M2：Agent 闭环 | 准备接收真实工具事件 | HTTP/基础循环/结果回填/上下文预算/步数重复 Stop 已完成；连续错误恢复、取消写入语义、事件载荷限制待补 | `runtime.py`、`stop.py`、`core/events.py` |
-| M3：执行过程展示 | 专用 Tool/Shell/File Change 卡片、统计和连接恢复验收 | 真实中间事件与结构化结果，保持 API/前端类型一致 | `App.vue`、`types.ts`、`api/client.ts`、`components/`；`models/event.py`、`models/task.py` |
+| M2：Agent 闭环 | 通用 Timeline 已接收真实工具事件 | HTTP/循环/回填/预算/Stop/恢复/关闭/事件限制均完成 | `runtime.py`、`stop.py`、`core/events.py` |
+| M3：执行过程展示 | 专用 Tool/Shell/File Change 卡片、统计和连接恢复验收 | 保持事件 API/前端专用类型一致 | `App.vue`、`types.ts`、`api/client.ts`、`components/`；`models/event.py`、`models/task.py` |
 | P1：Workspace / 静态托管 | 文件树、Code Viewer、Diff Viewer | 文件查询 API、前端静态产物托管 | 未来扩展 `components/`、`api/routes.py`、`main.py`；新增文件名尚未确定 |
 | M4：真实 Demo | 展示真实改动及测试结果 | 对真实项目完成探索、修改和验证 | `demo_workspace/` 及新增端到端测试 |
 
@@ -498,7 +499,7 @@ TaskManager / Runtime -> core/events.py（EventLog）
 
 ### 11.1 核心单元测试
 
-下面是目标验收清单。工具层、LLM 客户端错误转换、Loop 级停止和错误 Observation 已有自动化测试；连续恢复与真实供应商验收尚未实现，组件通过不代表完整 Agent 验收通过。
+下面是目标验收清单。工具层、LLM 客户端错误转换、Loop 级停止、错误 Observation、连续恢复和关闭清理已有自动化测试；真实供应商验收尚未实现，组件通过不代表完整 Agent 验收通过。
 
 - 路径穿越和符号链接逃逸被拒绝。
 - 文件读取行范围、输出截断正确。
@@ -553,11 +554,11 @@ TaskManager / Runtime -> core/events.py（EventLog）
 - 只读边界：UTF-8 普通文件、固定忽略规则、拒绝链接、资源预算及截断元数据已实现；不是并发对抗环境下的强沙箱。
 - LLM：已实现 OpenAI-compatible Chat Completions 客户端并由 Runtime 调用；严格响应/tool call 校验、有限重试与资源关闭已有测试，真实供应商联网验收尚未进行。
 - 写入与命令：UTF-8 原子写入、唯一替换、Diff/哈希、精简环境、命令白名单、超时/输出预算/回收已实现；不代表命令内脚本被沙箱隔离。
-- 最新复验：M2 累计新增 40 项后全量 234 passed，Ruff（43 文件）和 pip check 通过；上下文/Runtime 新增 13 项，受影响组件/API 针对性 30 passed。D001 三轮 194 和 HTTP 阶段 221 等历史保留原意；未运行真实模型任务。
+- 最新复验：M2 累计新增 48 项后全量 242 passed，Ruff（44 文件）和 pip check 通过；收口阶段新增 8 项事件/恢复/关闭测试。D001 三轮 194、HTTP 阶段 221 和基础 Loop 阶段 234 等历史保留原意；未运行真实模型任务。
 - D001：每命令新建 PYTHONPYCACHEPREFIX 并固定禁写字节码，普通 Python 子进程继承；不删除工作区已有缓存，命令结束后清理本次目录。该策略增加冷导入开销，也不是对主动覆盖环境或 sys.modules 热重载的保证。
-- 上下文与终止：字符/估算 token 双总预算计入工具 Schema；最近完整轮次和模型侧结果裁剪已接入。决策轮上限、第三次重复纠偏/第四次停止已生效；连续超时/错误恢复待补。
-- EventBus 在代码中以每任务 `EventLog` 实现。事件 `id` 是任务内递增数字字符串，用于 `Last-Event-ID` / `after` 续传；终态已读完返回 204。
-- TaskManager 保留至多 100 个内存任务，超过上限返回 503。Agent 任务会产生逐轮 assistant 事件，但真实工具事件和事件载荷/历史体积限制仍待增加。
+- 上下文与终止：字符/估算 token 双总预算计入工具 Schema；最近完整轮次、模型侧结果裁剪、决策轮/重复停止及连续 LLM/Runtime/命令超时阈值均已接入。
+- EventBus 在代码中以每任务 `EventLog` 实现。事件 `id` 是任务内单调递增数字字符串，用于 `Last-Event-ID` / `after` 续传；历史有体积/数量上限，过期游标返回 410，终态已读完返回 204。
+- TaskManager 保留至多 100 个内存任务，超过上限返回 503。Agent 任务会产生逐轮 assistant、工具、文件与命令事件；单 payload 和每任务历史受配置上限保护。
 - 安全：先实现路径越界与常见敏感路径校验、Host/Origin 限制、配置与异常详情不透出；这些不是强沙箱，也不是完备的敏感内容扫描。
 - CLI 帮助已反映本地 Agent；TaskManager 的 NOT_IMPLEMENTED 现在只表示模型三项配置不完整，不再表示 Loop 或工具未实现。
 - 最新验证、文档导航和独立 pytest 临时/缓存运行方式见 [docs/README](README.md)；D001 修复与三类缓存/权限区别见 [修复说明](Coding%20Agent%20D001%20修复说明.md)。前端构建和浏览器验证本次未重跑，历史记录不替代最新验收。

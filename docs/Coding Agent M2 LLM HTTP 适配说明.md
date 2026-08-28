@@ -59,7 +59,7 @@
 ## 6. 后续状态与尚未完成
 
 - 默认 `AgentRuntime` 现已在模型配置完整时创建并调用该客户端；配置不完整时仍保持 scaffold/`NOT_IMPLEMENTED` 安全降级。
-- Conversation 上下文总预算、工具结果回填和 StopController 基础策略现已接入；连续 Runtime 错误策略和工具事件仍属于后续 M2/M3。
+- Conversation 上下文总预算、工具结果回填、StopController、有界恢复和真实工具事件均已接入；前端专用事件卡片属于 M3。
 - 尚未对任何真实供应商或 OpenAI-compatible 网关做联网验收；不同供应商的非标准字段兼容性需要在 M4 真实模型阶段验证。
 - 当前只支持非流式 Chat Completions 原生 function tool calling；Responses API、旧 `function_call`、自定义工具和流式增量解析不在本阶段范围。
 

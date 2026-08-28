@@ -1,4 +1,6 @@
+import asyncio
 import json
+from time import monotonic
 from typing import Any, Protocol
 
 from app.agent.context import ContextBudget, ContextBudgetError, Conversation
@@ -43,15 +45,30 @@ class AgentRuntime:
         max_steps: int = 20,
         context_budget: ContextBudget | None = None,
         recent_rounds: int = 8,
+        max_consecutive_llm_errors: int = 3,
+        max_consecutive_runtime_errors: int = 3,
+        max_consecutive_command_timeouts: int = 3,
     ) -> None:
-        if max_steps < 1 or recent_rounds < 1:
-            raise ValueError("max_steps and recent_rounds must be positive")
+        if (
+            min(
+                max_steps,
+                recent_rounds,
+                max_consecutive_llm_errors,
+                max_consecutive_runtime_errors,
+                max_consecutive_command_timeouts,
+            )
+            < 1
+        ):
+            raise ValueError("Runtime limits must be positive")
         self.workspace = workspace
         self.tools = tools
         self.llm = llm
         self.max_steps = max_steps
         self.context_budget = context_budget or ContextBudget()
         self.recent_rounds = recent_rounds
+        self.max_consecutive_llm_errors = max_consecutive_llm_errors
+        self.max_consecutive_runtime_errors = max_consecutive_runtime_errors
+        self.max_consecutive_command_timeouts = max_consecutive_command_timeouts
 
     @property
     def ready(self) -> bool:
@@ -74,7 +91,12 @@ class AgentRuntime:
             raise RuntimeNotReady()
 
         conversation = Conversation(SYSTEM_PROMPT, task.prompt, self.context_budget)
-        stop = StopController(self.max_steps)
+        stop = StopController(
+            self.max_steps,
+            max_consecutive_llm_errors=self.max_consecutive_llm_errors,
+            max_consecutive_runtime_errors=self.max_consecutive_runtime_errors,
+            max_consecutive_command_timeouts=self.max_consecutive_command_timeouts,
+        )
         schemas = self.tools.schemas()
         steps_completed = 0
 
@@ -86,11 +108,35 @@ class AgentRuntime:
             except ContextBudgetError as exc:
                 raise AgentRuntimeError("CONTEXT_BUDGET_EXCEEDED", str(exc)) from None
 
-            steps_completed += 1
             try:
                 reply = await self.llm.complete(context, schemas)
             except LLMError as exc:
-                raise AgentRuntimeError(exc.code, str(exc)) from None
+                threshold_reached = stop.observe_llm_error()
+                if not exc.retryable:
+                    raise AgentRuntimeError(exc.code, str(exc)) from None
+                if threshold_reached:
+                    raise AgentRuntimeError(
+                        "CONSECUTIVE_LLM_ERRORS",
+                        "Model service remained unavailable after bounded Agent retries",
+                    ) from None
+                await events.publish(
+                    task.id,
+                    "assistant_message",
+                    {
+                        "message": (
+                            "Model request failed temporarily; retrying with the same context."
+                        ),
+                        "mode": "recovery",
+                        "error_code": exc.code,
+                        "consecutive_errors": stop.consecutive_llm_errors,
+                        "max_consecutive_errors": self.max_consecutive_llm_errors,
+                    },
+                    step=steps_completed + 1,
+                )
+                continue
+
+            stop.reset_llm_errors()
+            steps_completed += 1
 
             self._validate_reply(reply)
             assistant = self._assistant_message(reply)
@@ -116,13 +162,156 @@ class AgentRuntime:
 
             messages = [assistant]
             for call, decision in zip(reply.tool_calls, decisions, strict=True):
-                result = (
-                    self._repeat_warning()
-                    if decision == "warn"
-                    else await self.tools.execute(call.name, call.arguments)
+                result = await self._execute_tool(
+                    task,
+                    events,
+                    call,
+                    decision,
+                    steps_completed,
                 )
                 messages.append(self._tool_message(call.id, result))
+                stop_code = stop.observe_result(result)
+                if stop_code == "CONSECUTIVE_COMMAND_TIMEOUTS":
+                    raise AgentRuntimeError(
+                        stop_code, "Commands timed out repeatedly; the Agent was stopped"
+                    )
+                if stop_code == "CONSECUTIVE_RUNTIME_ERRORS":
+                    raise AgentRuntimeError(
+                        stop_code, "Tool infrastructure failed repeatedly; the Agent was stopped"
+                    )
             conversation.append_round(messages)
+
+    async def _execute_tool(
+        self,
+        task: Task,
+        events: EventLog,
+        call: ToolCall,
+        decision: str,
+        step: int,
+    ) -> ToolResult:
+        started = monotonic()
+        await events.publish(
+            task.id,
+            "tool_started",
+            {
+                "call_id": call.id,
+                "tool": call.name,
+                "arguments": self._event_arguments(call),
+                "synthetic": decision == "warn",
+            },
+            step=step,
+        )
+        try:
+            result = (
+                self._repeat_warning()
+                if decision == "warn"
+                else await self.tools.execute(call.name, call.arguments)
+            )
+        except asyncio.CancelledError:
+            await events.publish(
+                task.id,
+                "tool_finished",
+                {
+                    "call_id": call.id,
+                    "tool": call.name,
+                    "cancelled": True,
+                    "message": self._cancellation_message(call.name),
+                    "duration_ms": round((monotonic() - started) * 1000, 3),
+                },
+                step=step,
+            )
+            raise
+
+        duration_ms = round((monotonic() - started) * 1000, 3)
+        await events.publish(
+            task.id,
+            "tool_finished",
+            {
+                "call_id": call.id,
+                "tool": call.name,
+                "ok": result.ok,
+                "error_code": result.error_code,
+                "error_message": result.error_message,
+                "truncated": result.truncated,
+                "duration_ms": duration_ms,
+                "result": result.model_dump(mode="json"),
+                "synthetic": decision == "warn",
+            },
+            step=step,
+        )
+        await self._publish_specialized_event(task, events, call, result, step, duration_ms)
+        return result
+
+    @staticmethod
+    def _cancellation_message(tool_name: str) -> str:
+        if tool_name in {"write_file", "replace_in_file"}:
+            return (
+                "Task shutdown waited for the atomic file operation to settle; "
+                "cancellation does not roll back a committed change."
+            )
+        if tool_name == "run_command":
+            return "Task shutdown waited for the supervised command process tree to be cleaned up."
+        return "Tool execution was cancelled during task shutdown."
+
+    @staticmethod
+    def _event_arguments(call: ToolCall) -> dict[str, Any]:
+        arguments = dict(call.arguments)
+        for key in ("content", "old_text", "new_text"):
+            value = arguments.get(key)
+            if isinstance(value, str):
+                arguments[key] = {"redacted": True, "characters": len(value)}
+        return arguments
+
+    @staticmethod
+    async def _publish_specialized_event(
+        task: Task,
+        events: EventLog,
+        call: ToolCall,
+        result: ToolResult,
+        step: int,
+        duration_ms: float,
+    ) -> None:
+        output = result.output
+        if call.name in {"write_file", "replace_in_file"} and result.ok and output.get("changed"):
+            await events.publish(
+                task.id,
+                "file_changed",
+                {
+                    "call_id": call.id,
+                    "tool": call.name,
+                    "path": output.get("path"),
+                    "action": output.get("action"),
+                    "bytes_before": output.get("bytes_before"),
+                    "bytes_after": output.get("bytes_after"),
+                    "sha256_before": output.get("sha256_before"),
+                    "sha256_after": output.get("sha256_after"),
+                    "diff": output.get("diff"),
+                    "diff_truncated": output.get("diff_truncated"),
+                    "cleanup_pending": output.get("cleanup_pending"),
+                },
+                step=step,
+            )
+        if call.name == "run_command" and "termination_reason" in output:
+            await events.publish(
+                task.id,
+                "command_finished",
+                {
+                    "call_id": call.id,
+                    "ok": result.ok,
+                    "error_code": result.error_code,
+                    "command": call.arguments.get("command"),
+                    "exit_code": output.get("exit_code"),
+                    "termination_reason": output.get("termination_reason"),
+                    "timed_out": output.get("timed_out"),
+                    "cleanup_ok": output.get("cleanup_ok"),
+                    "stdout": output.get("stdout"),
+                    "stderr": output.get("stderr"),
+                    "stdout_truncated": output.get("stdout_truncated"),
+                    "stderr_truncated": output.get("stderr_truncated"),
+                    "duration_ms": duration_ms,
+                },
+                step=step,
+            )
 
     @staticmethod
     def _validate_reply(reply: ModelReply) -> None:

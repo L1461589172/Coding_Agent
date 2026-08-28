@@ -1,6 +1,6 @@
 # Coding Agent M1 工具系统完成说明
 
-更新日期：2026-08-27；2026-08-28 补充状态导航。六工具功能已实现，D001 修复阶段全量 **194 passed**；详见 [D001 修复说明](Coding%20Agent%20D001%20修复说明.md)。第 6 节保留 M1 的 172 passed 历史记录，第 7 节保留发现 D001 时的 171 passed / 1 failed 证据。此后 M2 已接入 LLM HTTP 客户端、上下文预算和基础 Agent Loop；当前 234 项验证见 [文档导航](README.md)。
+更新日期：2026-08-27；2026-08-28 补充状态导航。六工具功能已实现，D001 修复阶段全量 **194 passed**；详见 [D001 修复说明](Coding%20Agent%20D001%20修复说明.md)。第 6 节保留 M1 的 172 passed 历史记录，第 7 节保留发现 D001 时的 171 passed / 1 failed 证据。此后 M2 Agent Runtime 已完整接入；当前 242 项验证见 [文档导航](README.md)。
 
 ## 1. 当前完成范围
 
@@ -20,7 +20,7 @@ create_registry(
 
 `await registry.execute(name, arguments)` 接受工具名与参数字典，返回 `ToolResult`。参数严格校验、禁止额外字段；预算由创建注册表的 Python 调用方注入，没有对应 HTTP、CLI 或模型参数可以直接提高预算。`schemas()` 返回六工具 JSON Schema，`availability()` 返回六个 ready；ready 仅表示 handler 已实现，不保证 Node/npm 等外部程序一定安装或每次调用成功。
 
-当前 Registry 不产生工具事件。文件写入结果是返回的 Diff/哈希元数据，不是已存储的审计日志；M2/M3 才接入 tool_started/tool_finished/file_changed/command_finished。
+Registry 自身仍不产生事件；Runtime 现已根据 Registry 结果发布 tool_started/tool_finished/file_changed/command_finished。文件 Diff/哈希会进入受限内存事件历史，但这不是持久化审计日志。
 
 ## 2. M1 实现阶段的文件变更与当前职责
 

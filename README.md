@@ -2,7 +2,7 @@
 
 本地自主编程智能体：Vue 3 + TypeScript + FastAPI，自研 Agent Loop，不使用 Agent 框架/SDK 或托管代码执行工具。
 
-> M1 六工具与 M2 基础 Agent Loop 已完成：配置 OpenAI-compatible 模型后，可在字符/token 总预算内自主调用工具并按调用 ID 回填结果。工具专用事件、连续错误恢复和真实模型 Demo 仍待完成。
+> M1 六工具与 M2 Agent Runtime 已完成：配置 OpenAI-compatible 模型后，可在双总预算内自主调用工具、按调用 ID 回填结果、发布真实工具事件，并通过有界恢复与关闭清理保证任务终态。真实模型 Demo 仍待完成。
 
 ## 环境要求
 
@@ -125,6 +125,12 @@ Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health'
 | `CODING_AGENT_CONTEXT_MAX_TOKENS` | `20000` | 后端：消息与工具 Schema 的估算 token 总预算 | 已接入 Conversation |
 | `CODING_AGENT_TOOL_RESULT_MAX_CHARACTERS` | `12000` | 后端：单个模型侧 ToolResult 上限，至少 256 | 不改变工具自身输出上限 |
 | `CODING_AGENT_CONTEXT_RECENT_ROUNDS` | `8` | 后端：最多保留的最近完整轮次 | 已接入 Conversation |
+| `CODING_AGENT_EVENT_MAX_PAYLOAD_CHARACTERS` | `12000` | 后端：单事件 payload 字符上限，至少 256 | 超限转换为带元数据的预览信封 |
+| `CODING_AGENT_EVENT_MAX_HISTORY_CHARACTERS` | `256000` | 后端：每任务 SSE 历史字符上限，至少覆盖单 payload 加 1024 字符信封 | 超限淘汰最旧事件 |
+| `CODING_AGENT_EVENT_MAX_HISTORY_EVENTS` | `512` | 后端：每任务最多保留事件数，必须为正整数 | 事件 ID 始终单调递增 |
+| `CODING_AGENT_MAX_CONSECUTIVE_LLM_ERRORS` | `3` | 后端：Agent 级连续可恢复模型错误阈值 | 不替代客户端内部 HTTP 重试 |
+| `CODING_AGENT_MAX_CONSECUTIVE_RUNTIME_ERRORS` | `3` | 后端：连续工具基础设施错误阈值 | 达到阈值结构化终止 |
+| `CODING_AGENT_MAX_CONSECUTIVE_COMMAND_TIMEOUTS` | `3` | 后端：连续命令超时阈值 | 达到阈值结构化终止 |
 | `CODING_AGENT_BACKEND_URL` | `http://127.0.0.1:8000` | 前端终端：Vite 代理的后端地址 | 已使用，启动开发服务或预览服务前设置 |
 
 后端监听端口使用 CLI 的 `--port` 参数配置，不存在 `CODING_AGENT_PORT` 配置项。前端工具不会接收或使用模型 API Key。
@@ -164,6 +170,12 @@ $env:CODING_AGENT_CONTEXT_MAX_CHARACTERS = '80000'
 $env:CODING_AGENT_CONTEXT_MAX_TOKENS = '20000'
 $env:CODING_AGENT_TOOL_RESULT_MAX_CHARACTERS = '12000'
 $env:CODING_AGENT_CONTEXT_RECENT_ROUNDS = '8'
+$env:CODING_AGENT_EVENT_MAX_PAYLOAD_CHARACTERS = '12000'
+$env:CODING_AGENT_EVENT_MAX_HISTORY_CHARACTERS = '256000'
+$env:CODING_AGENT_EVENT_MAX_HISTORY_EVENTS = '512'
+$env:CODING_AGENT_MAX_CONSECUTIVE_LLM_ERRORS = '3'
+$env:CODING_AGENT_MAX_CONSECUTIVE_RUNTIME_ERRORS = '3'
+$env:CODING_AGENT_MAX_CONSECUTIVE_COMMAND_TIMEOUTS = '3'
 
 # 隐藏输入，避免把密钥字面量写进命令历史。
 $env:CODING_AGENT_API_KEY = [System.Net.NetworkCredential]::new(
@@ -232,7 +244,7 @@ $pytestRunDir = Join-Path $env:TEMP ("coding-agent-pytest-" + [guid]::NewGuid().
 
 按实际克隆位置调整上述绝对路径。pytest 会清空 `--basetemp`：必须使用新建的专用随机路径，不能指定项目根目录或已有数据目录。脚本不删除旧测试目录；运行记录保留在系统临时目录，便于检查失败样例。
 
-当前在 Windows/Python 3.12 下全量 **234 项测试通过**：包含 M1 的真实命令/D001 回归，以及 M2 的 HTTP、上下文双预算、工具 Schema 计量、调用 ID 回填、错误 Observation、步数/重复停止和 Fake LLM 真实本地修复流程。模型测试使用 MockTransport/Fake LLM，不消耗真实 API。详细记录见 [M2 Loop 说明](docs/Coding%20Agent%20M2%20上下文预算与%20Agent%20Loop%20说明.md)、[M2 HTTP 说明](docs/Coding%20Agent%20M2%20LLM%20HTTP%20适配说明.md) 与 [D001 修复说明](docs/Coding%20Agent%20D001%20修复说明.md)。保留既有 Starlette/httpx 弃用提示；前端构建本轮未重跑。
+当前在 Windows/Python 3.12 下全量 **242 项测试通过**：包含 M1 的真实命令/D001 回归，以及 M2 的 HTTP、上下文双预算、调用 ID 回填、真实工具事件与历史限制、连续错误阈值、关闭中原子写入和命令进程清理。模型测试使用 MockTransport/Fake LLM，不消耗真实 API。详细记录见 [M2 Loop 说明](docs/Coding%20Agent%20M2%20上下文预算与%20Agent%20Loop%20说明.md)、[M2 HTTP 说明](docs/Coding%20Agent%20M2%20LLM%20HTTP%20适配说明.md) 与 [D001 修复说明](docs/Coding%20Agent%20D001%20修复说明.md)。保留既有 Starlette/httpx 弃用提示；前端构建本轮未重跑。
 
 三类机制应分开处理：`--basetemp` 隔离 pytest 临时目录及账户权限；`cache_dir` 管理 pytest 状态缓存；Python/pytest 字节码则由 `run_command` 为每次命令设置独立 `PYTHONPYCACHEPREFIX` 并禁写常规字节码。修复不删除工作区已有 `.pyc`，也不要求手动清缓存。该策略只作用于工具命令，不接管用户手动启动的 Python。
 
@@ -294,15 +306,17 @@ docs/           # 设计、实施计划与修改说明
 - 六个工具均已实现，可独立调用；写入只接受受限大小的 UTF-8 普通文件，替换必须唯一匹配。详细参数、错误码和示例见 M1 完成说明。
 - `run_command` 接受 Python/pytest、Node 工作区脚本、npm 本地脚本和 echo 等白名单入口，不解释管道/重定向。获准脚本仍可访问工作区外文件和网络，必须只运行可信项目。
 - 命令使用精简子进程环境、输出上限、超时、Windows Job Object/POSIX 进程组清理；Job Object 仅管理进程生命周期，不隔离文件和网络。POSIX 分支尚未在本轮实机验证。
-- LLM 客户端与基础 Agent Loop 已接入；尚未做真实供应商验收、连续错误恢复或真实 Demo 成功率验证。
+- LLM 客户端与 M2 Agent Loop 已接入；尚未做真实供应商验收或真实 Demo 成功率验证。
 - Context 同时限制字符和估算 token，计入工具 Schema，按完整轮次保留最近记录；只裁剪模型侧 ToolResult，自动摘要仍不实现。
-- StopController 已执行决策轮上限和第三次重复纠偏/第四次停止；连续命令超时/LLM 错误阈值仍待实现，页面也没有任务取消入口。
+- StopController 已执行决策轮上限、重复纠偏/停止、连续命令超时、连续工具基础设施错误与 Agent 级可恢复 LLM 错误阈值；页面仍没有用户任务取消入口。
+- Runtime 发布 `tool_started`、`tool_finished`、`file_changed`、`command_finished`；事件 payload 与每任务历史均有上限，过期重连游标返回 410。前端目前仍以通用 JSON 卡片展示。
+- 服务关闭会等待已开始的原子文件写入落定，并等待命令进程树清理；取消不会回滚已经提交的文件修改，任务以 `SERVER_SHUTDOWN` 明确结束。
 - 本机 Host/Origin 限制不是身份认证，不能作为对公网或多用户部署的安全保障。
 - 项目文件和命令输出将来要作为不可信数据处理；实际日志脱敏管道待实现。
 
 ## 项目文档
 
-- [M2 上下文预算与 Agent Loop 说明](docs/Coding%20Agent%20M2%20上下文预算与%20Agent%20Loop%20说明.md)：双总预算、结果裁剪、调用 ID 回填、停止规则和 Fake LLM 闭环。
+- [M2 上下文预算与 Agent Loop 说明](docs/Coding%20Agent%20M2%20上下文预算与%20Agent%20Loop%20说明.md)：双总预算、结果裁剪、调用 ID 回填、真实事件、有界恢复、关闭语义和 Fake LLM 闭环。
 - [M2 LLM HTTP 适配说明](docs/Coding%20Agent%20M2%20LLM%20HTTP%20适配说明.md)：请求/响应契约、工具 Schema 复用、重试矩阵、安全错误与资源关闭。
 - [D001 修复说明](docs/Coding%20Agent%20D001%20修复说明.md)：命令级缓存策略、22 项新增回归、重复全量验证及三类缓存/权限问题。
 - [M1 工具系统完成说明](docs/Coding%20Agent%20M1%20工具系统完成说明.md)：写入/替换/Diff、命令白名单、资源边界、修改文件与完整验证。

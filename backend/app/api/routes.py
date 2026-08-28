@@ -51,6 +51,8 @@ async def task_events(task_id: str, request: Request, after: int = 0) -> Respons
         raise HTTPException(400, "Invalid event cursor") from exc
     if cursor < 0 or cursor > log.last_id:
         raise HTTPException(400, "Event cursor out of range")
+    if not log.cursor_available(cursor):
+        raise HTTPException(410, "Event history for this cursor has expired")
     if log.closed and cursor == log.last_id:
         # EventSource treats HTTP 204 as 'do not reconnect'.
         return Response(status_code=204)

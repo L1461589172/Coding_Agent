@@ -44,7 +44,7 @@ class FileTools:
 
     async def write_file(self, arguments: BaseModel) -> ToolResult:
         assert isinstance(arguments, WriteFileArgs)
-        return await asyncio.to_thread(self._write_file, arguments)
+        return await self._owned_write(self._write_file, arguments)
 
     def _write_file(self, args: WriteFileArgs) -> ToolResult:
         with self.workspace.write_lock:
@@ -53,7 +53,28 @@ class FileTools:
 
     async def replace_in_file(self, arguments: BaseModel) -> ToolResult:
         assert isinstance(arguments, ReplaceInFileArgs)
-        return await asyncio.to_thread(self._replace_in_file, arguments)
+        return await self._owned_write(self._replace_in_file, arguments)
+
+    @staticmethod
+    async def _owned_write(handler, arguments) -> ToolResult:
+        """On cancellation, wait until the atomic write either commits or fails."""
+
+        worker = asyncio.create_task(asyncio.to_thread(handler, arguments))
+        try:
+            return await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            # A thread cannot be cancelled safely. Keep ownership until the operation
+            # settles so shutdown never reports completion while a write can still commit.
+            while not worker.done():
+                try:
+                    await asyncio.shield(worker)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
+            if not worker.cancelled():
+                worker.exception()
+            raise
 
     def _replace_in_file(self, args: ReplaceInFileArgs) -> ToolResult:
         from app.tools.read_only import decode_text

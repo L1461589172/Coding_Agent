@@ -1,7 +1,7 @@
 import asyncio
 
 from app.agent.runtime import AgentRuntimeError, RuntimeNotReady, TaskRunner
-from app.core.events import EventLog
+from app.core.events import EventLimits, EventLog
 from app.models.task import Task, TaskError, TaskStatus, utc_now
 
 
@@ -16,10 +16,17 @@ class TaskCapacity(Exception):
 class TaskManager:
     """Single-event-loop manager. Use one Uvicorn worker; no cross-process locks."""
 
-    def __init__(self, runner: TaskRunner, max_tasks: int = 100, mode: str = "scaffold") -> None:
+    def __init__(
+        self,
+        runner: TaskRunner,
+        max_tasks: int = 100,
+        mode: str = "scaffold",
+        event_limits: EventLimits | None = None,
+    ) -> None:
         self.runner = runner
         self.max_tasks = max_tasks
         self.mode = mode
+        self.event_limits = event_limits or EventLimits()
         self.tasks: dict[str, Task] = {}
         self.logs: dict[str, EventLog] = {}
         self._active: str | None = None
@@ -33,7 +40,7 @@ class TaskManager:
             raise TaskCapacity()
         task = Task(prompt=prompt, mode=self.mode)
         self.tasks[task.id] = task
-        self.logs[task.id] = EventLog()
+        self.logs[task.id] = EventLog(self.event_limits)
         self._active = task.id
         self._job = asyncio.create_task(self._execute(task))
         return task.model_copy(deep=True)
