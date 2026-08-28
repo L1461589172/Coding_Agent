@@ -1,6 +1,6 @@
 # Coding Agent M1 只读工具实现说明
 
-> 2026-08-28 状态导航：第 1、3–7 节作为当前只读工具参考；第 2、8 节保留首次实现/验证记录。六工具与 D001 修复阶段全量 194 passed；此后 M2 Agent Runtime 已完整接入，当前全量 242 passed，见 [M2 上下文预算与 Agent Loop 说明](Coding%20Agent%20M2%20上下文预算与%20Agent%20Loop%20说明.md) 和 [文档导航](README.md)。
+> 2026-08-28 状态导航：第 1、3–7 节作为当前只读工具参考；第 2、8 节保留首次实现/验证记录。六工具与 D001 修复阶段全量 194 passed；此后 M2/M3 已完整接入，当前全量 246 passed，见 [M3 API 与 UI 完成说明](Coding%20Agent%20M3%20API%20与%20UI%20完成说明.md) 和 [文档导航](README.md)。
 
 首次实现日期：2026-08-27。本文件重点说明路径解析、`list_files`、`read_file`、`search_text`；后续写入、替换、Diff 和命令功能已在 M1 完整说明中记录。
 

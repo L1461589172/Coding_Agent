@@ -2,7 +2,7 @@
 
 本地自主编程智能体：Vue 3 + TypeScript + FastAPI，自研 Agent Loop，不使用 Agent 框架/SDK 或托管代码执行工具。
 
-> M1 六工具与 M2 Agent Runtime 已完成：配置 OpenAI-compatible 模型后，可在双总预算内自主调用工具、按调用 ID 回填结果、发布真实工具事件，并通过有界恢复与关闭清理保证任务终态。真实模型 Demo 仍待完成。
+> M1 六工具、M2 Agent Runtime 与 M3 API/UI 已完成：配置 OpenAI-compatible 模型后，可在双总预算内自主调用工具、按调用 ID 回填结果，并通过专用卡片观察真实工具、文件与命令事件；页面支持有界重连和整页恢复。真实模型 Demo 仍待完成。
 
 ## 环境要求
 
@@ -86,7 +86,7 @@ npm.cmd run dev
 
 1. 打开 [健康检查](http://127.0.0.1:8000/health)，确认返回 `status: "ok"`。
 2. 打开 [Swagger 接口文档](http://127.0.0.1:8000/docs)，确认接口列表可见。
-3. 在前端输入任务并点击“检查任务链路”。
+3. 在前端输入任务并点击“开始任务”。
 4. 未配置模型时会看到 `NOT_IMPLEMENTED`；三项模型配置完整时，`agent_ready=true` 并执行 Agent Loop，最终为 completed 或结构化失败。
 
 也可以用 PowerShell 检查后端：
@@ -244,7 +244,7 @@ $pytestRunDir = Join-Path $env:TEMP ("coding-agent-pytest-" + [guid]::NewGuid().
 
 按实际克隆位置调整上述绝对路径。pytest 会清空 `--basetemp`：必须使用新建的专用随机路径，不能指定项目根目录或已有数据目录。脚本不删除旧测试目录；运行记录保留在系统临时目录，便于检查失败样例。
 
-当前在 Windows/Python 3.12 下全量 **242 项测试通过**：包含 M1 的真实命令/D001 回归，以及 M2 的 HTTP、上下文双预算、调用 ID 回填、真实工具事件与历史限制、连续错误阈值、关闭中原子写入和命令进程清理。模型测试使用 MockTransport/Fake LLM，不消耗真实 API。详细记录见 [M2 Loop 说明](docs/Coding%20Agent%20M2%20上下文预算与%20Agent%20Loop%20说明.md)、[M2 HTTP 说明](docs/Coding%20Agent%20M2%20LLM%20HTTP%20适配说明.md) 与 [D001 修复说明](docs/Coding%20Agent%20D001%20修复说明.md)。保留既有 Starlette/httpx 弃用提示；前端构建本轮未重跑。
+当前在 Windows/Python 3.12 下全量 **246 项测试通过**：包含 M1 的真实命令/D001 回归、M2 Runtime，以及 M3 的断线游标回放、大载荷、服务重启和终态一致性契约。模型测试使用 MockTransport/Fake LLM，不消耗真实 API。详细记录见 [M3 说明](docs/Coding%20Agent%20M3%20API%20与%20UI%20完成说明.md)、[M2 Loop 说明](docs/Coding%20Agent%20M2%20上下文预算与%20Agent%20Loop%20说明.md) 与 [D001 修复说明](docs/Coding%20Agent%20D001%20修复说明.md)。保留既有 Starlette/httpx 弃用提示；前端严格类型检查与生产构建通过。
 
 三类机制应分开处理：`--basetemp` 隔离 pytest 临时目录及账户权限；`cache_dir` 管理 pytest 状态缓存；Python/pytest 字节码则由 `run_command` 为每次命令设置独立 `PYTHONPYCACHEPREFIX` 并禁写常规字节码。修复不删除工作区已有 `.pyc`，也不要求手动清缓存。该策略只作用于工具命令，不接管用户手动启动的 Python。
 
@@ -257,7 +257,7 @@ npm.cmd run build
 
 `constraints.txt` 记录本次已验证的 Python 依赖快照，`frontend/package-lock.json` 锁定前端依赖。测试不使用真实模型或凭据。
 
-可选浏览器 smoke test 位于 `scripts/smoke_browser.cjs`：需要独立提供 Playwright、安装 Microsoft Edge，并先按上文启动两个服务。它检查元数据、任务提交、三个 SSE 事件、未实现结果和移动端溢出，截图保存到被 Git 忽略的 `output/qa/`。Playwright 不属于 Agent 运行依赖。
+可选浏览器 smoke test 位于 `scripts/smoke_browser.cjs`：需要独立提供 Playwright、安装 Microsoft Edge，并先按上文启动两个服务。它检查元数据、任务提交、三个 SSE 事件、整页刷新恢复、未实现结果和移动端溢出，截图保存到被 Git 忽略的 `output/qa/`。Playwright 不属于 Agent 运行依赖。
 
 ## 常见问题
 
@@ -309,13 +309,14 @@ docs/           # 设计、实施计划与修改说明
 - LLM 客户端与 M2 Agent Loop 已接入；尚未做真实供应商验收或真实 Demo 成功率验证。
 - Context 同时限制字符和估算 token，计入工具 Schema，按完整轮次保留最近记录；只裁剪模型侧 ToolResult，自动摘要仍不实现。
 - StopController 已执行决策轮上限、重复纠偏/停止、连续命令超时、连续工具基础设施错误与 Agent 级可恢复 LLM 错误阈值；页面仍没有用户任务取消入口。
-- Runtime 发布 `tool_started`、`tool_finished`、`file_changed`、`command_finished`；事件 payload 与每任务历史均有上限，过期重连游标返回 410。前端目前仍以通用 JSON 卡片展示。
+- Runtime 发布 `tool_started`、`tool_finished`、`file_changed`、`command_finished`；事件 payload 与每任务历史均有上限，过期重连游标返回 410。前端以专用卡片展示并逐类校验 payload。
 - 服务关闭会等待已开始的原子文件写入落定，并等待命令进程树清理；取消不会回滚已经提交的文件修改，任务以 `SERVER_SHUTDOWN` 明确结束。
 - 本机 Host/Origin 限制不是身份认证，不能作为对公网或多用户部署的安全保障。
 - 项目文件和命令输出将来要作为不可信数据处理；实际日志脱敏管道待实现。
 
 ## 项目文档
 
+- [M3 API 与 UI 完成说明](docs/Coding%20Agent%20M3%20API%20与%20UI%20完成说明.md)：专用事件卡片、严格响应校验、SSE/整页恢复与终态一致性。
 - [M2 上下文预算与 Agent Loop 说明](docs/Coding%20Agent%20M2%20上下文预算与%20Agent%20Loop%20说明.md)：双总预算、结果裁剪、调用 ID 回填、真实事件、有界恢复、关闭语义和 Fake LLM 闭环。
 - [M2 LLM HTTP 适配说明](docs/Coding%20Agent%20M2%20LLM%20HTTP%20适配说明.md)：请求/响应契约、工具 Schema 复用、重试矩阵、安全错误与资源关闭。
 - [D001 修复说明](docs/Coding%20Agent%20D001%20修复说明.md)：命令级缓存策略、22 项新增回归、重复全量验证及三类缓存/权限问题。

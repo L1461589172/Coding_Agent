@@ -1,6 +1,6 @@
 # Coding Agent M1 工具系统完成说明
 
-更新日期：2026-08-27；2026-08-28 补充状态导航。六工具功能已实现，D001 修复阶段全量 **194 passed**；详见 [D001 修复说明](Coding%20Agent%20D001%20修复说明.md)。第 6 节保留 M1 的 172 passed 历史记录，第 7 节保留发现 D001 时的 171 passed / 1 failed 证据。此后 M2 Agent Runtime 已完整接入；当前 242 项验证见 [文档导航](README.md)。
+更新日期：2026-08-27；2026-08-28 补充状态导航。六工具功能已实现，D001 修复阶段全量 **194 passed**；详见 [D001 修复说明](Coding%20Agent%20D001%20修复说明.md)。第 6 节保留 M1 的 172 passed 历史记录，第 7 节保留发现 D001 时的 171 passed / 1 failed 证据。此后 M2/M3 已完整接入；当前 246 项验证见 [文档导航](README.md)。
 
 ## 1. 当前完成范围
 
@@ -179,7 +179,7 @@ asyncio.run(main())
 - 无模型流程确实执行 pytest：先失败，再替换，再通过；没有伪造命令结果。
 - Ruff 检查与格式检查通过；前端 TypeScript + Vite 构建通过。本轮未重新运行浏览器视觉 smoke，也未调用模型。
 - 仍有已有的 Starlette TestClient/httpx 弃用提示。没有为消除提示而升级依赖。
-- 后续 M2/M3：LLM HTTP 适配现已完成；真实模型与循环、工具结果回填、事件发布、载荷/上下文预算、Tool/Shell/File Change 专用卡片仍待做。当前任务页面不代表工具集成已完成。
+- 后续进展：M2 的 HTTP/循环/回填/预算/事件与 M3 的 Tool/Shell/File Change 专用卡片、刷新恢复均已完成；真实供应商 Demo 与连续成功率仍属于 M4。本节 172 项数字只保留 M1 历史含义。
 - 安全边界：可信单用户、单工作区本地开发工具，不是 OS 级文件/网络沙箱；Windows 实测，其他系统待验收。
 
 实现依据：[Python subprocess](https://docs.python.org/3/library/subprocess.html)、[Python os 原子替换](https://docs.python.org/3/library/os.html#os.replace)、[Windows Job Objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects)、[Job 扩展限制](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-jobobject_extended_limit_information)。
