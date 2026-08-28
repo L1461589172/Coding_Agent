@@ -13,6 +13,28 @@ def test_config_does_not_repr_secret(tmp_path):
     assert "do-not-show-this" not in repr(settings)
     with pytest.raises(ValueError):
         Settings(workspace=tmp_path, max_steps=0)
+    with pytest.raises(ValueError):
+        Settings(workspace=tmp_path, llm_timeout_seconds=0)
+    with pytest.raises(ValueError):
+        Settings(workspace=tmp_path, llm_max_retries=11)
+    with pytest.raises(ValueError):
+        Settings(workspace=tmp_path, llm_timeout_seconds=float("nan"))
+
+
+def test_model_policy_settings_from_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("CODING_AGENT_API_KEY", "environment-secret")
+    monkeypatch.setenv("CODING_AGENT_BASE_URL", "https://model.example/v1")
+    monkeypatch.setenv("CODING_AGENT_MODEL", "test-model")
+    monkeypatch.setenv("CODING_AGENT_LLM_TIMEOUT_SECONDS", "45.5")
+    monkeypatch.setenv("CODING_AGENT_LLM_CONNECT_TIMEOUT_SECONDS", "7.5")
+    monkeypatch.setenv("CODING_AGENT_LLM_MAX_RETRIES", "3")
+    settings = Settings.from_env(str(tmp_path))
+    assert settings.base_url == "https://model.example/v1"
+    assert settings.model == "test-model"
+    assert settings.llm_timeout_seconds == 45.5
+    assert settings.llm_connect_timeout_seconds == 7.5
+    assert settings.llm_max_retries == 3
+    assert "environment-secret" not in repr(settings)
 
 
 def test_repeat_and_step_limit():

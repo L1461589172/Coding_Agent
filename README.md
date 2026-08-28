@@ -115,9 +115,12 @@ Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health'
 |---|---|---|---|
 | `CODING_AGENT_WORKSPACE` | `.` | 后端：应用工厂未传工作区时的默认值 | CLI 仍要求显式传入工作区参数，且该参数优先 |
 | `CODING_AGENT_MAX_STEPS` | `20` | 后端：必须为正整数 | 已读取并校验，尚未接入完整 Loop |
-| `CODING_AGENT_API_KEY` | 空 | 后端：模型密钥 | 预留；当前无需配置 |
-| `CODING_AGENT_BASE_URL` | 空 | 后端：模型服务地址 | 预留；当前不发起外部请求 |
-| `CODING_AGENT_MODEL` | 空 | 后端：模型名称 | 预留 |
+| `CODING_AGENT_API_KEY` | 空 | 后端：模型密钥 | LLM HTTP 客户端使用；默认 Runtime 尚未调用客户端 |
+| `CODING_AGENT_BASE_URL` | 空 | 后端：OpenAI-compatible `/v1` 根或完整 Chat Completions 地址 | 已由客户端校验；默认 Runtime 尚未调用 |
+| `CODING_AGENT_MODEL` | 空 | 后端：模型名称 | 已由客户端使用；默认 Runtime 尚未调用 |
+| `CODING_AGENT_LLM_TIMEOUT_SECONDS` | `60` | 后端：模型 read/write/pool 超时，必须为正数 | 已接入 LLM 客户端配置 |
+| `CODING_AGENT_LLM_CONNECT_TIMEOUT_SECONDS` | `10` | 后端：模型连接超时，必须为正数 | 已接入 LLM 客户端配置 |
+| `CODING_AGENT_LLM_MAX_RETRIES` | `2` | 后端：瞬时故障重试次数，0–10 | 已接入 LLM 客户端配置 |
 | `CODING_AGENT_BACKEND_URL` | `http://127.0.0.1:8000` | 前端终端：Vite 代理的后端地址 | 已使用，启动开发服务或预览服务前设置 |
 
 后端监听端口使用 CLI 的 `--port` 参数配置，不存在 `CODING_AGENT_PORT` 配置项。前端工具不会接收或使用模型 API Key。
@@ -142,14 +145,17 @@ npm.cmd run dev
 
 此时前端仍访问 `http://127.0.0.1:5173`，健康检查改为 `http://127.0.0.1:8001/health`。前端固定使用 5173，端口占用会直接报错，不会自动切换；自定义前端端口还需同步后端 Origin 允许列表，不属于当前开箱即用配置。
 
-### 模型配置（未来接入后使用）
+### 模型客户端配置
 
-当前可完全跳过本节。下面仅说明预留变量的配置方式，**设置它们不会使尚未实现的 Agent 开始工作**。服务地址和模型名应以实际接入的供应商为准。
+当前可以完全跳过本节。HTTP 客户端已经实现，但默认 Agent Runtime 尚未调用它；**设置变量不会使尚未完成的 Agent Loop 开始工作**。服务地址和模型名应以实际接入的 OpenAI-compatible 供应商为准。
 
 ```powershell
 # 在后端终端设置；示例地址和模型名是占位值，不能直接用于真实请求。
 $env:CODING_AGENT_BASE_URL = 'https://your-provider.example/v1'
 $env:CODING_AGENT_MODEL = 'your-model-name'
+$env:CODING_AGENT_LLM_TIMEOUT_SECONDS = '60'
+$env:CODING_AGENT_LLM_CONNECT_TIMEOUT_SECONDS = '10'
+$env:CODING_AGENT_LLM_MAX_RETRIES = '2'
 
 # 隐藏输入，避免把密钥字面量写进命令历史。
 $env:CODING_AGENT_API_KEY = [System.Net.NetworkCredential]::new(
@@ -218,7 +224,7 @@ $pytestRunDir = Join-Path $env:TEMP ("coding-agent-pytest-" + [guid]::NewGuid().
 
 按实际克隆位置调整上述绝对路径。pytest 会清空 `--basetemp`：必须使用新建的专用随机路径，不能指定项目根目录或已有数据目录。脚本不删除旧测试目录；运行记录保留在系统临时目录，便于检查失败样例。
 
-本轮在 Windows/Python 3.12 下修复 D001，新增 22 项回归后全量 **194 项测试通过**，包含真实子进程、Node/npm、超时/取消/子进程回收，以及固定时间戳、等长修改和已有旧 `.pyc` 的无模型验证。重复运行记录见 [D001 修复说明](docs/Coding%20Agent%20D001%20修复说明.md)。可选 Node/npm 或符号链接在不支持的环境会明确 skip；保留已有 Starlette/httpx 弃用提示，前端构建本轮未重跑。
+当前在 Windows/Python 3.12 下全量 **221 项测试通过**：包含 M1 的真实子进程、Node/npm、超时/取消/子进程回收与 D001 确定性回归，以及 M2 的 HTTP 请求、工具 Schema 透传、响应/finish reason 校验、重试/取消、错误脱敏和资源关闭测试。LLM 测试使用 MockTransport，不消耗真实 API。详细记录见 [M2 LLM HTTP 适配说明](docs/Coding%20Agent%20M2%20LLM%20HTTP%20适配说明.md) 与 [D001 修复说明](docs/Coding%20Agent%20D001%20修复说明.md)。保留既有 Starlette/httpx 弃用提示；前端构建本轮未重跑。
 
 三类机制应分开处理：`--basetemp` 隔离 pytest 临时目录及账户权限；`cache_dir` 管理 pytest 状态缓存；Python/pytest 字节码则由 `run_command` 为每次命令设置独立 `PYTHONPYCACHEPREFIX` 并禁写常规字节码。修复不删除工作区已有 `.pyc`，也不要求手动清缓存。该策略只作用于工具命令，不接管用户手动启动的 Python。
 
@@ -280,7 +286,7 @@ docs/           # 设计、实施计划与修改说明
 - 六个工具均已实现，可独立调用；写入只接受受限大小的 UTF-8 普通文件，替换必须唯一匹配。详细参数、错误码和示例见 M1 完成说明。
 - `run_command` 接受 Python/pytest、Node 工作区脚本、npm 本地脚本和 echo 等白名单入口，不解释管道/重定向。获准脚本仍可访问工作区外文件和网络，必须只运行可信项目。
 - 命令使用精简子进程环境、输出上限、超时、Windows Job Object/POSIX 进程组清理；Job Object 仅管理进程生命周期，不隔离文件和网络。POSIX 分支尚未在本轮实机验证。
-- LLM 客户端只有协议；没有 HTTP 请求、模型响应解析和完整 Agent Loop。
+- LLM 客户端已实现 OpenAI-compatible 非流式 Chat Completions 请求、严格 tool call 校验、有限重试和幂等关闭；默认 Runtime 尚未接入，因此仍没有完整 Agent Loop 或真实模型验收。
 - Context 按完整交互轮次保留最近记录；字符/token 预算、输出截断和摘要待实现。
 - StopController 是可单测的策略，还未接入 Runtime；命令超时与取消清理已在工具层实现，页面尚无任务取消入口。
 - 本机 Host/Origin 限制不是身份认证，不能作为对公网或多用户部署的安全保障。
@@ -288,6 +294,7 @@ docs/           # 设计、实施计划与修改说明
 
 ## 项目文档
 
+- [M2 LLM HTTP 适配说明](docs/Coding%20Agent%20M2%20LLM%20HTTP%20适配说明.md)：请求/响应契约、工具 Schema 复用、重试矩阵、安全错误与资源关闭。
 - [D001 修复说明](docs/Coding%20Agent%20D001%20修复说明.md)：命令级缓存策略、22 项新增回归、重复全量验证及三类缓存/权限问题。
 - [M1 工具系统完成说明](docs/Coding%20Agent%20M1%20工具系统完成说明.md)：写入/替换/Diff、命令白名单、资源边界、修改文件与完整验证。
 - [M1 只读工具说明](docs/Coding%20Agent%20M1%20只读工具实现说明.md)：调用方法、输出字段、路径策略、资源限制和验证结果。

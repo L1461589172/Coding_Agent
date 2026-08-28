@@ -3,7 +3,7 @@
 > 计划周期：2026-08-27 至 2026-09-02  
 > 交付目标：先完成可重复的端到端 Agent 闭环，再补展示与提交材料。任何 P1 功能不得阻塞 P0。
 
-> 2026-08-27 修复更新：M0 基础框架、M1 六工具已实现；D001 已通过独立命令缓存策略修复，新增 22 项回归，当前全量 **194 passed**。M2/M3 尚未闭环。详见 [当前状态](README.md) 与 [D001 修复/重复验证](Coding%20Agent%20D001%20修复说明.md)。
+> 2026-08-28 更新：M0、M1 已实现；M2 已完成 OpenAI-compatible HTTP 客户端、响应校验、有限重试与资源关闭，全量 **221 passed**。Agent Loop 与 M3 仍未闭环。详见 [当前状态](README.md) 与 [M2 LLM 适配说明](Coding%20Agent%20M2%20LLM%20HTTP%20适配说明.md)。
 
 ## 1. 里程碑
 
@@ -42,15 +42,15 @@
 
 退出标准：不经过模型，工具层测试全部通过；任何文件写入都能给出可审计结果。
 
-历史记录为 172 passed，随后复验发现 D001（171 passed / 1 failed）。修复后新增 22 项，当前全量 194 passed；Ruff（40 文件）和 pip check 通过。重复运行与执行环境见 D001 修复说明；前端本次未变更也未重建，POSIX 分支仍待实机验收。
+历史记录为 172 passed，随后复验发现 D001（171 passed / 1 failed）。M1 修复阶段新增 22 项并达到 194 passed；重复运行与执行环境见 D001 修复说明。此后 M2 新增 27 项，当前全量为 221 passed；前端本次未变更也未重建，POSIX 分支仍待实机验收。
 
 ### M2：Agent Runtime（08-29）
 
-当前基础：LLMClient 协议、按完整轮次保留消息的 Conversation、独立 StopController 已可单测；默认 Runtime 只发出未实现说明，没有模型调用或工具循环。
+当前基础：具体 LLM HTTP 适配、按完整轮次保留消息的 Conversation、独立 StopController 与 ToolRegistry 已可单测；默认 Runtime 仍只发出未实现说明，没有模型调用或工具循环。
 
 - [x] 已有 LLMClient / ModelReply / ToolCall 接口，以及六工具 Schema 生成与 ToolRegistry 分发。
 - [x] 已有 Conversation 完整轮次配对/最近轮次裁剪，StopController 步数与重复调用独立策略。
-- [ ] 实现具体 LLM HTTP 适配、响应校验、超时/重试和资源关闭；复用既有工具 Schema。
+- [x] 实现具体 LLM HTTP 适配、响应校验、超时/重试和资源关闭；原样复用既有工具 Schema。详见 [M2 说明](Coding%20Agent%20M2%20LLM%20HTTP%20适配说明.md)。
 - [ ] 实现上下文字符/token 总预算及结果裁剪整合；不重复实现已有工具层输出上限。
 - [ ] 将 Conversation、ToolRegistry、StopController 接入 Agent Loop，按调用 ID 回填结果。
 - [ ] 发布真实 tool_started/tool_finished/file_changed/command_finished 事件并限制事件/历史体积。
@@ -96,7 +96,7 @@
 
 | 层级 | 方法 | 必测内容 |
 |---|---|---|
-| 单元/工具集成 | pytest | Workspace、文件读写、命令生命周期、StopController、完整轮次裁剪；194 项，含 D001 的 22 项新回归 |
+| 单元/工具集成 | pytest | Workspace、文件读写、命令生命周期、LLM HTTP、StopController、完整轮次裁剪；221 项，含 D001 的 22 项与 M2 的 27 项新回归 |
 | 无模型工具流程 | tests/test_shell_tools.py / test_command_bytecode.py | 真实写入、pytest 失败、替换与复验；固定时间戳旧缓存及重复执行验证 |
 | 组件（待实现） | Fake LLM | tool call 解析、结果回填、错误恢复、结束条件；不同于已有无模型工具流程 |
 | API | FastAPI TestClient | 任务冲突、状态查询、事件格式和回放 |

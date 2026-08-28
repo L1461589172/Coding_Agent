@@ -1,6 +1,6 @@
 # 文档导航与当前代码状态
 
-更新日期：2026-08-27。基于本地提交 `6786d21` 后的 D001 修复工作区：修改命令缓存策略并新增 22 项回归测试，不改变依赖、前端或原始需求 PDF。
+更新日期：2026-08-28。当前为 M2 LLM HTTP 适配工作区：在已完成的 M1/D001 基础上新增模型请求、响应校验、超时/有限重试、错误脱敏与资源关闭，不改变依赖、前端或原始需求 PDF。
 
 ## 阅读顺序
 
@@ -9,6 +9,7 @@
 | [项目结构与功能设计](Coding%20Agent%20项目结构与功能设计文档.md) | 目标架构与当前实现对照；第 9 节逐文件职责，第 13 节当前状态 |
 | [实施计划](Coding%20Agent%20实施计划.md) | 已完成、待接入、待修复和后续验收；日期是原定计划，不代表自动完成 |
 | [M1 工具系统完成说明](Coding%20Agent%20M1%20工具系统完成说明.md) | 当前写入/命令契约及限制；第 7 节保留 D001 的历史发现证据 |
+| [M2 LLM HTTP 适配说明](Coding%20Agent%20M2%20LLM%20HTTP%20适配说明.md) | 当前模型请求、响应校验、超时/重试、错误与资源关闭契约 |
 | [D001 修复说明](Coding%20Agent%20D001%20修复说明.md) | 命令级字节码缓存策略、确定性回归、重复运行记录与三类缓存/权限问题区分 |
 | [M1 只读工具实现说明](Coding%20Agent%20M1%20只读工具实现说明.md) | 当前只读工具参考；首次实现清单和 104 项测试属于历史阶段 |
 | [基础框架修改说明](Coding%20Agent%20基础框架修改说明.md) | M0 历史记录；当时的“工具未实现”和 35 项测试不代表当前状态 |
@@ -21,7 +22,7 @@
 |---|---|---|
 | M0 工程基础 | CLI、FastAPI、Vue、任务/SSE 链路；已有本地阶段提交 | 打包与单端口交付，不等于真实 Agent |
 | M1 工具 | 六工具可独立调用；路径守卫、原子写入、唯一替换、Diff、受限命令与清理；D001 已修复 | POSIX 实机验收；真实 Runtime 接入属于 M2 |
-| M2 Runtime | LLMClient 协议、Conversation、StopController、ToolRegistry | LLM HTTP 实现、完整循环、结果回填、预算与错误恢复 |
+| M2 Runtime | OpenAI-compatible HTTP 客户端、严格响应校验、有限重试/关闭；Conversation、StopController、ToolRegistry | 完整循环、结果回填、上下文预算与 Runtime 错误恢复 |
 | M3 API/UI | 创建/查询、SSE、输入/状态/通用 Timeline、去重、防重复提交与手动重连 | 真实工具事件、专用 Tool/Shell/Diff 卡片、长期恢复验收 |
 | M4/M5 演示交付 | demo_workspace 占位 README、开发说明与测试基础 | 真实模型 Demo、稳定成功率、README.txt、视频与最终提交材料 |
 
@@ -34,13 +35,15 @@
 | 检查 | 结果 |
 |---|---|
 | 源码清单 | 后端 30 个 Python 文件；前端 8 个源码文件、5 个入口/配置文件；9 个测试模块和 conftest.py |
-| pytest 收集 | 194 项（原 172 + 新增 22） |
-| `scripts/test.ps1` 全量复验 | **连续三轮各 194 passed, 1 warning**，含 backend 目录入口及沙箱外普通用户环境；见 [D001 修复说明](Coding%20Agent%20D001%20修复说明.md#4-验证记录) |
+| pytest 收集 | 221 项（历史 194 + M2 新增 27） |
+| 本轮全量复验 | **221 passed, 1 warning**；独立随机 pytest 临时/缓存目录，未调用真实模型 |
+| M2 LLM 针对性验证 | LLM 客户端 26 项 + Agent 契约 5 项，共 31 passed；见 [M2 说明](Coding%20Agent%20M2%20LLM%20HTTP%20适配说明.md) |
+| D001 历史全量复验 | 连续三轮各 194 passed, 1 warning；见 [D001 修复说明](Coding%20Agent%20D001%20修复说明.md#4-验证记录) |
 | D001 针对性验证 | 新增 22 项 + 原无模型流程，共 23 passed；固定 mtime、等长修改、真实旧缓存与连续调用 |
-| Ruff lint / format / pip check | 通过，40 个 Python 文件格式符合配置，依赖一致 |
+| Ruff lint / format / pip check | 通过，41 个 Python 文件格式符合配置，依赖一致 |
 | 前端构建、浏览器 smoke | 本次未重跑；此前阶段记录保留，不冒充本次复验结果 |
 
-已有的 Starlette TestClient/httpx 弃用警告保留，未为消除它升级依赖。历史 172 passed 及随后发现 D001 时的 171 passed / 1 failed 仍保留原意；当前结论基于修复后的新回归与全量验证。
+已有的 Starlette TestClient/httpx 弃用警告保留，未为消除它升级依赖。历史 172 passed、D001 发现时的 171 passed / 1 failed 及修复后的三轮 194 passed 均保留原意；当前结论基于 M2 后的 221 项全量验证。
 
 ## 如何复验
 
