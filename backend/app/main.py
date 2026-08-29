@@ -65,6 +65,7 @@ def create_app(settings: Settings | None = None, runner: TaskRunner | None = Non
             max_tasks_per_session=config.history_max_tasks_per_session,
             backup_limit=config.history_backup_limit,
             backup_max_bytes=config.history_backup_max_bytes,
+            max_bytes=config.history_max_bytes,
         )
         tasks: TaskManager | None = None
         try:
@@ -94,7 +95,7 @@ def create_app(settings: Settings | None = None, runner: TaskRunner | None = Non
     app.add_middleware(
         CORSMiddleware,
         allow_origins=config.allowed_origins,
-        allow_methods=["GET", "POST"],
+        allow_methods=["GET", "POST", "DELETE"],
         allow_headers=["Content-Type", "Last-Event-ID"],
     )
 

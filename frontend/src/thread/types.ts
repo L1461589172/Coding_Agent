@@ -77,4 +77,6 @@ export interface ConversationThreadViewModel {
   runs: TaskRunViewModel[]
 }
 
-export type ComposerIntent = { kind: 'new_task', prompt: string }
+export type ComposerIntent =
+  | { kind: 'new_task', prompt: string }
+  | { kind: 'follow_up', sessionId: string, prompt: string }

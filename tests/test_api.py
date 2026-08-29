@@ -112,6 +112,13 @@ def test_active_task_conflict_and_shutdown(tmp_path, history_dir):
         task = client.post("/api/tasks", json={"prompt": "wait"}).json()
         assert started.wait(timeout=2)
         assert client.post("/api/tasks", json={"prompt": "second"}).status_code == 409
+        assert (
+            client.post(
+                f"/api/sessions/{task['session_id']}/tasks", json={"prompt": "follow up"}
+            ).status_code
+            == 409
+        )
+        assert client.delete(f"/api/sessions/{task['session_id']}").status_code == 409
     assert stopped.is_set()
     assert app.state.tasks.get(task["id"]).error.code == "SERVER_SHUTDOWN"
 

@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -71,6 +71,8 @@ class TaskSummary(BaseModel):
 class Task(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str = Field(default_factory=lambda: str(uuid4()))
+    session_id: str | None = None
+    ordinal: int | None = Field(default=None, ge=1, le=100)
     prompt: str
     status: TaskStatus = TaskStatus.PENDING
     created_at: datetime = Field(default_factory=utc_now)
@@ -80,3 +82,5 @@ class Task(BaseModel):
     error: TaskError | None = None
     mode: str = "scaffold"
     summary: TaskSummary | None = None
+    history_rounds: list[list[dict[str, Any]]] = Field(default_factory=list, exclude=True)
+    history_task_count: int = Field(default=0, ge=0, exclude=True)

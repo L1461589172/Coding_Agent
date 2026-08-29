@@ -16,7 +16,13 @@ from pydantic import BaseModel
 
 from app.core.events import EventLimits
 from app.history.atomic import atomic_write_json
-from app.history.errors import HistoryCapacity, HistoryDataInvalid, HistoryStorageUnavailable
+from app.history.errors import (
+    HistoryCapacity,
+    HistoryDataInvalid,
+    HistoryStorageUnavailable,
+    SessionNotFound,
+    SessionTaskLimit,
+)
 from app.history.lock import HistoryFileLock
 from app.history.migrations import initialize_or_migrate
 from app.history.models import (
@@ -46,13 +52,17 @@ from app.services.trace import CommandTrace, ExecutionTrace, build_task_summary
 
 
 class HistoryRepository(Protocol):
-    async def create_with_task(self, task: Task, trace: ExecutionTrace) -> None: ...
+    async def create_with_task(
+        self, task: Task, trace: ExecutionTrace, session_id: str | None = None
+    ) -> PersistedTaskData: ...
 
     def get_task(self, task_id: str) -> Task: ...
 
     def get_persisted_task(self, task_id: str) -> PersistedTaskData: ...
 
     def has_unfinished_task(self) -> bool: ...
+
+    def get_session(self, session_id: str) -> SessionData: ...
 
     def list_sessions(
         self, limit: int, before: str | None = None
@@ -67,6 +77,8 @@ class HistoryRepository(Protocol):
     ) -> None: ...
 
     async def reconcile_interrupted(self) -> list[str]: ...
+
+    async def delete_session(self, session_id: str) -> None: ...
 
     async def close(self) -> None: ...
 
@@ -221,6 +233,8 @@ class InMemoryHistoryRepository:
         self, task: Task, trace: ExecutionTrace
     ) -> tuple[SessionEnvelope, TaskEnvelope]:
         session_id = str(uuid4())
+        task.session_id = session_id
+        task.ordinal = 1
         session = SessionEnvelope(
             revision=1,
             data=SessionData(
@@ -248,19 +262,64 @@ class InMemoryHistoryRepository:
         )
         return session, persisted
 
-    async def create_with_task(self, task: Task, trace: ExecutionTrace) -> None:
+    async def create_with_task(
+        self, task: Task, trace: ExecutionTrace, session_id: str | None = None
+    ) -> PersistedTaskData:
         async with self._write_lock:
-            if len(self.sessions) >= self.max_sessions:
-                raise HistoryCapacity("History session limit reached")
             if task.id in self.tasks:
                 raise HistoryDataInvalid("Task identifier already exists")
-            session, persisted = self._new_records(task, trace)
-            await self._store_new(session, persisted)
+            if session_id is None:
+                if len(self.sessions) >= self.max_sessions:
+                    raise HistoryCapacity("History session limit reached")
+                session, persisted = self._new_records(task, trace)
+                await self._store_new(session, persisted)
+            else:
+                normalized = validated_uuid(session_id)
+                try:
+                    current = self.sessions[normalized]
+                except KeyError as exc:
+                    raise SessionNotFound("Session was not found") from exc
+                if current.data.task_count >= self.max_tasks_per_session:
+                    raise SessionTaskLimit("Session task limit reached")
+                if current.data.last_task_status not in {TaskStatus.COMPLETED, TaskStatus.FAILED}:
+                    raise HistoryDataInvalid("Session has an unfinished Task")
+                ordinal = current.data.task_count + 1
+                task.session_id = normalized
+                task.ordinal = ordinal
+                persisted = TaskEnvelope(
+                    revision=1,
+                    data=PersistedTaskData(
+                        session_id=normalized,
+                        ordinal=ordinal,
+                        task=task.model_copy(deep=True),
+                        trace=_trace_data(trace),
+                        events=[],
+                        first_event_id=1,
+                        last_event_id=0,
+                    ),
+                )
+                session = SessionEnvelope(
+                    revision=current.revision + 1,
+                    data=current.data.model_copy(
+                        update={
+                            "updated_at": task.created_at,
+                            "task_ids": [*current.data.task_ids, task.id],
+                            "task_count": ordinal,
+                            "last_task_id": task.id,
+                            "last_task_status": task.status,
+                        }
+                    ),
+                )
+                await self._store_append(session, persisted)
             self.sessions[session.data.id] = session
             self.tasks[task.id] = persisted
             self.task_sessions[task.id] = session.data.id
+            return persisted.data.model_copy(deep=True)
 
     async def _store_new(self, session: SessionEnvelope, task: TaskEnvelope) -> None:
+        del session, task
+
+    async def _store_append(self, session: SessionEnvelope, task: TaskEnvelope) -> None:
         del session, task
 
     def get_task(self, task_id: str) -> Task:
@@ -274,6 +333,12 @@ class InMemoryHistoryRepository:
             envelope.data.task.status in {TaskStatus.PENDING, TaskStatus.RUNNING}
             for envelope in self.tasks.values()
         )
+
+    def get_session(self, session_id: str) -> SessionData:
+        try:
+            return self.sessions[validated_uuid(session_id)].data.model_copy(deep=True)
+        except (KeyError, HistoryStorageUnavailable) as exc:
+            raise SessionNotFound("Session was not found") from exc
 
     def list_sessions(
         self, limit: int, before: str | None = None
@@ -305,7 +370,10 @@ class InMemoryHistoryRepository:
         if not 1 <= limit <= 100:
             raise HistoryDataInvalid("Task page limit is invalid")
         normalized = validated_uuid(session_id)
-        session = self.sessions[normalized]
+        try:
+            session = self.sessions[normalized]
+        except KeyError as exc:
+            raise SessionNotFound("Session was not found") from exc
         tasks = sorted(
             (self.tasks[task_id].data for task_id in session.data.task_ids),
             key=lambda value: value.ordinal,
@@ -370,6 +438,22 @@ class InMemoryHistoryRepository:
             reconciled.append(task_id)
         return reconciled
 
+    async def delete_session(self, session_id: str) -> None:
+        async with self._write_lock:
+            normalized = validated_uuid(session_id)
+            try:
+                session = self.sessions[normalized]
+            except KeyError as exc:
+                raise SessionNotFound("Session was not found") from exc
+            await self._store_delete(session)
+            for task_id in session.data.task_ids:
+                self.tasks.pop(task_id, None)
+                self.task_sessions.pop(task_id, None)
+            self.sessions.pop(normalized, None)
+
+    async def _store_delete(self, session: SessionEnvelope) -> None:
+        del session
+
     async def close(self) -> None:
         return None
 
@@ -386,6 +470,7 @@ class JsonHistoryRepository(InMemoryHistoryRepository):
         max_tasks_per_session: int = 100,
         backup_limit: int = 3,
         backup_max_bytes: int = 64 * 1024 * 1024,
+        max_bytes: int = 512 * 1024 * 1024,
     ) -> None:
         super().__init__(
             event_limits,
@@ -397,10 +482,55 @@ class JsonHistoryRepository(InMemoryHistoryRepository):
         self.application_root = application_root
         self.backup_limit = backup_limit
         self.backup_max_bytes = backup_max_bytes
+        self.max_bytes = max_bytes
         self.paths: HistoryPaths | None = None
         self._file_lock: HistoryFileLock | None = None
         self._opened = False
         self._index_revision = 0
+
+    def _history_size_sync(self) -> int:
+        assert self.paths is not None
+        total = 0
+        for root, directories, files in os.walk(self.paths.root, followlinks=False):
+            root_path = Path(root)
+            if path_is_link(root_path):
+                raise HistoryStorageUnavailable("History storage cannot contain linked directories")
+            linked_directories = [name for name in directories if path_is_link(root_path / name)]
+            if linked_directories:
+                raise HistoryStorageUnavailable("History storage cannot contain linked directories")
+            for name in files:
+                path = root_path / name
+                if path_is_link(path):
+                    raise HistoryStorageUnavailable("History storage cannot contain linked files")
+                try:
+                    total += path.stat().st_size
+                except OSError as exc:
+                    raise HistoryStorageUnavailable(
+                        "History capacity could not be measured"
+                    ) from exc
+        return total
+
+    def _ensure_replacement_capacity_sync(self, *replacements: tuple[Path, BaseModel]) -> None:
+        growth = 0
+        for path, value in replacements:
+            encoded = value.model_dump_json().encode("utf-8")
+            try:
+                current = path.stat().st_size if path.is_file() else 0
+            except OSError as exc:
+                raise HistoryStorageUnavailable("History capacity could not be measured") from exc
+            growth += max(0, len(encoded) - current)
+        if self._history_size_sync() + growth > self.max_bytes:
+            raise HistoryCapacity("History byte limit reached")
+
+    def _cleanup_trash_sync(self) -> None:
+        trash = self._workspace_path() / "trash"
+        ensure_real_directory(trash, boundary=self.paths.root if self.paths else trash.parent)
+        for batch in list(trash.iterdir()):
+            if path_is_link(batch) or not batch.is_dir():
+                raise HistoryStorageUnavailable("History trash contains an invalid entry")
+            # Cleanup is best-effort after the authoritative index no longer exposes
+            # the Session. Windows scanners can race individual unlinks.
+            shutil.rmtree(batch, ignore_errors=True)
 
     async def open(self) -> None:
         if self._opened:
@@ -563,6 +693,7 @@ class JsonHistoryRepository(InMemoryHistoryRepository):
         self.sessions = loaded_sessions
         self.task_sessions = task_sessions
         self._write_index_sync(stored_index)
+        self._cleanup_trash_sync()
 
     def _rebuilt_session(
         self,
@@ -641,14 +772,28 @@ class JsonHistoryRepository(InMemoryHistoryRepository):
     async def _store_new(self, session: SessionEnvelope, task: TaskEnvelope) -> None:
         await asyncio.to_thread(self._store_new_sync, session, task)
 
+    async def _store_append(self, session: SessionEnvelope, task: TaskEnvelope) -> None:
+        await asyncio.to_thread(self._store_append_sync, session, task)
+
+    def _store_append_sync(self, session: SessionEnvelope, task: TaskEnvelope) -> None:
+        assert self.paths is not None
+        task_path = self.paths.task(task.data.session_id, task.data.ordinal, task.data.task.id)
+        session_path = self.paths.session(session.data.id) / "session.json"
+        self._ensure_replacement_capacity_sync((task_path, task), (session_path, session))
+        atomic_write_json(task_path, task)
+        atomic_write_json(session_path, session)
+
     def _store_new_sync(self, session: SessionEnvelope, task: TaskEnvelope) -> None:
         assert self.paths is not None
         final = self.paths.session(session.data.id)
         staging = final.parent / f".session-tmp-{session.data.id}"
         try:
             (staging / "tasks").mkdir(parents=True, mode=0o700)
-            atomic_write_json(staging / "session.json", session)
             task_path = staging / "tasks" / f"{task.data.ordinal:010d}-{task.data.task.id}.json"
+            self._ensure_replacement_capacity_sync(
+                (staging / "session.json", session), (task_path, task)
+            )
+            atomic_write_json(staging / "session.json", session)
             atomic_write_json(task_path, task)
             SessionEnvelope.model_validate_json((staging / "session.json").read_text("utf-8"))
             TaskEnvelope.model_validate_json(task_path.read_text("utf-8"))
@@ -667,13 +812,16 @@ class JsonHistoryRepository(InMemoryHistoryRepository):
                 shutil.rmtree(staging, ignore_errors=True)
             raise
 
-    async def create_with_task(self, task: Task, trace: ExecutionTrace) -> None:
-        await super().create_with_task(task, trace)
+    async def create_with_task(
+        self, task: Task, trace: ExecutionTrace, session_id: str | None = None
+    ) -> PersistedTaskData:
+        persisted = await super().create_with_task(task, trace, session_id)
         try:
             await asyncio.to_thread(self._write_index_sync)
         except HistoryStorageUnavailable:
             # The Task/Session directory is authoritative; startup rebuilds this projection.
             pass
+        return persisted
 
     async def _store_update(self, task: TaskEnvelope, session: SessionEnvelope) -> None:
         await asyncio.to_thread(self._store_update_sync, task, session)
@@ -685,8 +833,10 @@ class JsonHistoryRepository(InMemoryHistoryRepository):
             task.data.ordinal,
             task.data.task.id,
         )
+        session_path = self.paths.session(session.data.id) / "session.json"
+        self._ensure_replacement_capacity_sync((task_path, task), (session_path, session))
         atomic_write_json(task_path, task)
-        atomic_write_json(self.paths.session(session.data.id) / "session.json", session)
+        atomic_write_json(session_path, session)
 
     async def commit_task_event(self, task: Task, event: AgentEvent, trace: ExecutionTrace) -> None:
         await super().commit_task_event(task, event, trace)
@@ -694,6 +844,62 @@ class JsonHistoryRepository(InMemoryHistoryRepository):
             await asyncio.to_thread(self._write_index_sync)
         except HistoryStorageUnavailable:
             pass
+
+    async def _store_delete(self, session: SessionEnvelope) -> None:
+        await asyncio.to_thread(self._store_delete_sync, session)
+
+    def _store_delete_sync(self, session: SessionEnvelope) -> None:
+        assert self.paths is not None
+        source = self.paths.session(session.data.id)
+        if not source.is_dir() or path_is_link(source):
+            raise SessionNotFound("Session was not found")
+        trash = self._workspace_path() / "trash"
+        batch = trash / str(uuid4())
+        batch.mkdir(mode=0o700)
+        target = batch / session.data.id
+        moved: list[tuple[Path, Path]] = []
+        try:
+            os.replace(source, target)
+            moved.append((source, target))
+            if self.paths.backups.is_dir() and not path_is_link(self.paths.backups):
+                for candidate in list(self.paths.backups.rglob(session.data.id)):
+                    if not candidate.is_dir() or candidate.name != session.data.id:
+                        continue
+                    if path_is_link(candidate):
+                        raise HistoryStorageUnavailable("History backup cannot contain links")
+                    related_target = batch / f"backup-{uuid4()}"
+                    os.replace(candidate, related_target)
+                    moved.append((candidate, related_target))
+            if self.paths.quarantine.is_dir() and not path_is_link(self.paths.quarantine):
+                for candidate in list(self.paths.quarantine.iterdir()):
+                    if not candidate.is_file() or path_is_link(candidate):
+                        continue
+                    try:
+                        related = session.data.id in candidate.read_text(
+                            encoding="utf-8", errors="ignore"
+                        )
+                    except OSError as exc:
+                        raise HistoryStorageUnavailable(
+                            "Quarantined history could not be checked for deletion"
+                        ) from exc
+                    if related:
+                        related_target = batch / f"quarantine-{uuid4()}-{candidate.name}"
+                        os.replace(candidate, related_target)
+                        moved.append((candidate, related_target))
+        except (OSError, HistoryStorageUnavailable) as exc:
+            for original, moved_target in reversed(moved):
+                try:
+                    original.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                    os.replace(moved_target, original)
+                except OSError:
+                    pass
+            shutil.rmtree(batch, ignore_errors=True)
+            raise HistoryStorageUnavailable("Session could not be moved to trash") from exc
+
+    async def delete_session(self, session_id: str) -> None:
+        await super().delete_session(session_id)
+        await asyncio.to_thread(self._write_index_sync)
+        await asyncio.to_thread(self._cleanup_trash_sync)
 
     async def close(self) -> None:
         if not self._opened:

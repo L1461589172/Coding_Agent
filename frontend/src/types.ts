@@ -37,6 +37,8 @@ export interface TaskSummary {
 
 export interface Task {
   id: string
+  session_id: string
+  ordinal: number
   prompt: string
   status: TaskStatus
   mode: string
@@ -46,6 +48,27 @@ export interface Task {
   result: string | null
   error: TaskError | null
   summary: TaskSummary | null
+}
+
+export interface SessionListItem {
+  id: string
+  title: string
+  created_at: string
+  updated_at: string
+  task_count: number
+  last_task_id: string | null
+  last_task_status: TaskStatus | null
+  history_incomplete: boolean
+}
+
+export interface SessionPage {
+  items: SessionListItem[]
+  next_cursor: string | null
+}
+
+export interface TaskPage {
+  items: Task[]
+  next_before_ordinal: number | null
 }
 
 export interface ToolResultPayload {
@@ -261,6 +284,10 @@ function isToolResult(value: unknown): value is ToolResultPayload {
 export function parseTask(value: unknown): Task {
   if (!isRecord(value)
     || !isString(value.id)
+    || !isString(value.session_id)
+    || !isNumber(value.ordinal)
+    || !Number.isInteger(value.ordinal)
+    || value.ordinal < 1
     || !isString(value.prompt)
     || !isString(value.status)
     || !TASK_STATUSES.has(value.status as TaskStatus)
@@ -274,6 +301,46 @@ export function parseTask(value: unknown): Task {
     throw new Error('后端返回了无效的任务数据')
   }
   return value as unknown as Task
+}
+
+function isSession(value: unknown): value is SessionListItem {
+  return isRecord(value)
+    && isString(value.id)
+    && isString(value.title)
+    && isString(value.created_at)
+    && isString(value.updated_at)
+    && isNumber(value.task_count)
+    && Number.isInteger(value.task_count)
+    && value.task_count >= 0
+    && isNullableString(value.last_task_id)
+    && (value.last_task_status === null
+      || (isString(value.last_task_status) && TASK_STATUSES.has(value.last_task_status as TaskStatus)))
+    && isBoolean(value.history_incomplete)
+}
+
+export function parseSession(value: unknown): SessionListItem {
+  if (!isSession(value)) throw new Error('后端返回了无效的会话数据')
+  return value
+}
+
+export function parseSessionPage(value: unknown): SessionPage {
+  if (!isRecord(value) || !Array.isArray(value.items) || !value.items.every(isSession)
+    || !isNullableString(value.next_cursor)) {
+    throw new Error('后端返回了无效的会话列表')
+  }
+  return value as unknown as SessionPage
+}
+
+export function parseTaskPage(value: unknown): TaskPage {
+  if (!isRecord(value) || !Array.isArray(value.items)
+    || !value.items.every((item) => {
+      try { parseTask(item); return true } catch { return false }
+    })
+    || !(value.next_before_ordinal === null
+      || (isNumber(value.next_before_ordinal) && Number.isInteger(value.next_before_ordinal)))) {
+    throw new Error('后端返回了无效的任务列表')
+  }
+  return value as unknown as TaskPage
 }
 
 export function parseMetadata(value: unknown): Metadata {

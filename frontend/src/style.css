@@ -7,6 +7,8 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 button:hover:not(:disabled) { filter: brightness(1.1); }
 button:focus-visible, textarea:focus-visible { outline: 2px solid #a1ead0; outline-offset: 3px; }
 .secondary { background: #252f40; color: #d9e4f4; border-color: #3c4a61; }
+.danger { background: #4a2025; color: #ffd9dc; border-color: #77363d; }
+.history-actions { max-width: 940px; margin: 0 auto 14px; display: flex; gap: 8px; flex-wrap: wrap; }
 .app-shell { max-width: 1400px; margin: 0 auto; padding: 0 36px; }
 .app-header { display: flex; justify-content: space-between; align-items: center; padding: 28px 0; border-bottom: 1px solid #2a3445; gap: 16px; }
 .brand { display: flex; gap: 14px; align-items: center; }

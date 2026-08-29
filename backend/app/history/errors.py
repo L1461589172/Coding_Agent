@@ -20,3 +20,15 @@ class HistoryDataInvalid(HistoryError):
 
 class HistoryCapacity(HistoryError):
     code = "HISTORY_CAPACITY"
+
+
+class SessionNotFound(HistoryError):
+    code = "SESSION_NOT_FOUND"
+
+
+class SessionTaskLimit(HistoryCapacity):
+    code = "SESSION_TASK_LIMIT"
+
+
+class SessionActive(HistoryError):
+    code = "SESSION_ACTIVE"

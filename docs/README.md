@@ -1,6 +1,6 @@
 # 文档导航与当前代码状态
 
-更新日期：2026-08-29。M1–M5 已收口；M6 Phase 0–2 已完成 JSON HistoryRepository、持久 Task/Event 生命周期和重启收敛，Phase 3–7 仍待实现；最终交付为 M7。
+更新日期：2026-08-29。M1–M6 已收口；M6 已完成 JSON HistoryRepository、Session/follow-up、有界多轮上下文、历史 UI、删除与资源治理；最终交付为 M7。
 
 ## 阅读顺序
 
@@ -33,7 +33,7 @@
 | M3 API/UI | 创建/查询、严格响应校验、专用 Tool/Shell/File Change 卡片、有界重连、整页恢复与终态核对 | 已完成；跨进程持久化不在范围内 |
 | M4 Demo | 初始失败的真实 Bug、可重复验收器、Prompt 调优；真实模型连续 3/3 成功 | 已完成；不外推为任意任务 100% 成功率 |
 | M5 UX | ConversationThread/TaskRun、`call_id` Activity 聚合、File/Command 附件、完整 Trace/Summary、版本化恢复与响应式/无障碍 | 已完成；历史持久化与 follow-up 仍属于 M6 |
-| M6 历史/多轮 | Phase 0–2：项目内版本化 JSON、原子替换/单写锁、严格 DTO/路径、迁移/隔离、持久 Task/Event、durable replay 与重启收敛 | Phase 3–7：Session/follow-up API、历史预算、历史 UI、删除/保留及最终验收 |
+| M6 历史/多轮 | 项目内版本化 JSON、原子替换/单写锁、持久 Task/Event、durable replay、Session/follow-up API、确定性有界 TaskRecap、历史 UI、删除/容量/关闭 | 已完成；真实模型多轮/重启 smoke 3/3 |
 | M7 交付 | 开发说明与测试基础 | 待 M5/M6 完成后制作 README.txt、视频、密钥扫描与最终提交材料 |
 
 `/api/meta` 的六个 `tool_statuses` 均为 `ready`。模型三项配置完整时为 `agent_ready=true`、`mode=agent` 并运行真实 Loop；配置不完整时为 scaffold，任务以 `NOT_IMPLEMENTED` 结束且不执行工具。仍没有独立 HTTP 工具执行入口。
@@ -45,9 +45,10 @@
 | 检查 | 结果 |
 |---|---|
 | 源码清单 | 后端 39 个 Python 文件；前端 `src` 28 个文件；17 个测试模块和 conftest.py；M4 与 browser 验收脚本各 1 个 |
-| pytest 收集 | 276 项（M5 基线 254 + M6 Phase 0–2 新增/扩展 22） |
-| 本轮全量复验 | **276 passed, 1 warning** |
-| M6 Phase 0–2 定向复验 | Repository/Task/Event/API/Workspace 共 **96 passed, 1 warning**；Ruff lint/format 全通过 |
+| pytest 收集/全量复验 | **281 passed, 1 warning** |
+| M6 Phase 3–7 定向复验 | Session/API/context/retention 30 passed；Ruff lint/format 全通过 |
+| 前端 | 20 passed；严格类型、生产构建与 M6 browser smoke 通过 |
+| M6 真实模型 smoke | 3/3 COMPLETED；重启恢复与 8 项检查全部通过，34.688 秒 |
 | M5 后真实模型 | 新的连续 3/3；平均 12.240 秒，Agent/独立 pytest 均为 2 passed，Summary 三项检查均通过 |
 | M3 API/UI 契约 | 新增 4 项：断线回放、大载荷、服务重启、成功/失败终态一致性 |
 | M2 Runtime 收口验证 | 新增 8 项事件/恢复/关闭测试；见 [Loop 说明](Coding%20Agent%20M2%20上下文预算与%20Agent%20Loop%20说明.md) |
@@ -58,7 +59,7 @@
 | 前端单测/类型/构建 | Vitest 4 files / 20 tests；`vue-tsc --noEmit`；Vite 33 modules、93.60 kB JS，全部通过 |
 | 浏览器 smoke | Playwright/Edge 已实测 failed/running/completed、附件、刷新、410/404/204、focus 与 390px |
 
-已有的 Starlette TestClient/httpx 弃用警告保留，未为消除它升级依赖。历史阶段数字均保留原意；当前后端结论基于 M6 Phase 0–2 后的 276 项 Python 测试。20 项前端测试、浏览器验收及独立三轮真实模型结果仍是 M5 阶段证据，本轮未冒充重新执行。
+已有的 Starlette TestClient/httpx 弃用警告保留，未为消除它升级依赖。历史阶段数字均保留原意；当前后端结论基于 M6 完成后的 281 项 Python 测试。本轮重新执行了前端测试/类型/构建、M6 browser smoke 和真实多轮 smoke。
 
 ## 如何复验
 

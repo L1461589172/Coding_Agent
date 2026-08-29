@@ -8,6 +8,8 @@ const timestamp = '2026-08-29T08:00:00Z'
 function task(id: string, status: Task['status'] = 'RUNNING'): Task {
   return {
     id,
+    session_id: '00000000-0000-4000-8000-000000000001',
+    ordinal: 1,
     prompt: `prompt-${id}`,
     status,
     mode: 'agent',

@@ -8,7 +8,7 @@
 >
 > 核心目标：历史任务在服务重启后仍可浏览；一次 follow-up 创建新的 Task 并归入同一 Session；模型只接收有界、完整、可解释的历史回合摘要，不复用旧 Task 的工具调用状态。
 
-> 2026-08-29 实施状态：Phase 0–2 已完成并通过后端全量 `276 passed, 1 warning` 与定向 `96 passed, 1 warning`；Phase 3–7 尚未实现。当前旧 `POST /api/tasks` 会在内部创建新 Session，但 Task DTO 的 `session_id`/`ordinal`、Session API、follow-up、历史上下文、UI、删除/保留和真实多轮验收仍按后续 Phase 推进。
+> 2026-08-29 完成状态：Phase 0–7 的 P0 实现已完成。后端全量 `281 passed, 1 warning`，M6 定向 30 passed，Ruff、前端 20 项 Vitest、严格类型、生产构建与 M6 browser smoke 通过。经用户授权的真实模型多轮/重启 smoke 为 3/3 COMPLETED：同 Session ordinal 1→2→3，重启恢复、follow-up 重读当前文件/运行 pytest、测试未改和模型密钥不落历史等 8 项检查全部通过。正式交付候选仍由 M7 再做一次冻结复验。
 
 当前 format v1 冻结上限为 200 Session、每 Session 100 Task、单 Task 512 个/256000 字符的受限事件、单事件 payload 12000 字符、单 JSON 读取 2 MiB；TaskRecap 契约的 prompt/result 上限分别为 4000/8000 字符。单次启动最多自动隔离 10 个损坏 Task，超过后停止启动并保留 quarantine 现场，避免把大面积损坏误报为空历史。
 
@@ -601,7 +601,7 @@ Prompt、result、文件名和命令摘要可能包含项目敏感信息。历�
 - shutdown 和 startup reconciliation；
 - 从内存淘汰终态 Task 后仍可完整读取。
 
-### Phase 3：Session API 与兼容层
+### Phase 3：Session API 与兼容层（已完成）
 
 - 扩展 Task DTO 的 `session_id` / `ordinal`；
 - 保持 `POST /api/tasks` 创建新 Session；
@@ -609,7 +609,7 @@ Prompt、result、文件名和命令摘要可能包含项目敏感信息。历�
 - Origin、busy、Workspace 隔离、分页游标和容量错误；
 - OpenAPI 与前端严格 parser 更新。
 
-### Phase 4：SessionContextBuilder
+### Phase 4：SessionContextBuilder（已完成）
 
 - TaskRecap 确定性构建；
 - newest-first 选择、完整回合保留、old-to-new 输出；
@@ -617,7 +617,7 @@ Prompt、result、文件名和命令摘要可能包含项目敏感信息。历�
 - completed/failed/restarted/summary-invalid/超长历史覆盖；
 - 证明没有旧 ToolResult、Diff 或 call_id 进入新 Task Runtime。
 
-### Phase 5：历史与多 TaskRun UX
+### Phase 5：历史与多 TaskRun UX（已完成）
 
 - Sidebar 游标历史；
 - selectedSession 与 activeTask 状态拆分；
@@ -626,7 +626,7 @@ Prompt、result、文件名和命令摘要可能包含项目敏感信息。历�
 - URL query、前进后退、recent-context v2 与旧 key 迁移；
 - 删除确认、404、重启失败、空/错/加载状态。
 
-### Phase 6：保留、安全与资源关闭
+### Phase 6：保留、安全与资源关闭（已完成）
 
 - 会话/任务/事件/磁盘上限；
 - 原子移动到 trash、异步清理和 active-session 保护；
@@ -634,7 +634,7 @@ Prompt、result、文件名和命令摘要可能包含项目敏感信息。历�
 - canary secret、日志和历史 JSON 内容扫描；
 - 故障注入：临时写失败、`fsync`/`os.replace` 失败、替换结果未知、损坏 JSON、迁移失败、磁盘满。
 
-### Phase 7：回归与文档收口
+### Phase 7：回归与文档收口（已完成；M7 将做最终候选复验）
 
 - 后端 pytest/Ruff；前端 Vitest/typecheck/build；browser smoke；
 - M1–M5 回归，特别是 M2 预算、M3 SSE、M4 真实模型 3/3、M5 Activity/Summary；
@@ -722,23 +722,23 @@ Prompt、result、文件名和命令摘要可能包含项目敏感信息。历�
 
 ## 14. M6 退出标准
 
-- [ ] 历史 Session/Task/Summary/有界 Events 在正常服务重启后仍可读取；
-- [ ] 在途任务重启后只收敛一次为 `SERVER_RESTARTED`，不会自动重放；
-- [ ] 现有 `POST /api/tasks`、GET Task、SSE replay 保持兼容；
-- [ ] follow-up 创建同 Session 的新 Task 和新 Runtime 状态；
-- [ ] Session 列表和 Task 列表使用稳定游标分页；
-- [ ] ConversationThread 复用 M5 TaskRun/Activity/Summary，没有第二套格式化实现；
-- [ ] 历史上下文使用完整、有界 TaskRecap，并通过 M2 最终总预算校验；
-- [ ] 旧 raw ToolResult、Diff、stdout/stderr、call_id、StopController 状态不进入新 Task；
-- [ ] 全局单活动 Task 约束在新会话和 follow-up 两条入口都成立；
-- [ ] 删除 terminal Session 后 API/UI 不可再读取，活动 Session 不可删除；
-- [ ] 历史位于项目 `/.coding-agent/history/`，被 Git 忽略且被六工具路径守卫阻止；文件锁、临时文件、SSE watcher 和后台任务可关闭；
-- [ ] Task 状态、Trace、Summary 与有界 Events 通过单 Task JSON 原子替换保持一致，索引可重建；
-- [ ] 配置/请求头中的 API Key 与供应商原始响应不进入历史 JSON/日志/事件；会话正文的本地持久化边界已明确告知用户；
-- [ ] format migration、restart、故障注入、backend、frontend、browser 测试通过；
-- [ ] 经授权的真实模型多轮 smoke 通过，且 M4 独立三轮回归仍为 3/3；
-- [ ] README 与 docs 说明存储位置类别、保留、删除、重启和备份/损坏行为；
-- [ ] M7 最终交付不存在被推迟的 M6 P0 实现。
+- [x] 历史 Session/Task/Summary/有界 Events 在正常服务重启后仍可读取；
+- [x] 在途任务重启后只收敛一次为 `SERVER_RESTARTED`，不会自动重放；
+- [x] 现有 `POST /api/tasks`、GET Task、SSE replay 保持兼容；
+- [x] follow-up 创建同 Session 的新 Task 和新 Runtime 状态；
+- [x] Session 列表和 Task 列表使用稳定游标分页；
+- [x] ConversationThread 复用 M5 TaskRun/Activity/Summary，没有第二套格式化实现；
+- [x] 历史上下文使用完整、有界 TaskRecap，并通过 M2 最终总预算校验；
+- [x] 旧 raw ToolResult、Diff、stdout/stderr、call_id、StopController 状态不进入新 Task；
+- [x] 全局单活动 Task 约束在新会话和 follow-up 两条入口都成立；
+- [x] 删除 terminal Session 后 API/UI 不可再读取，活动 Session 不可删除；
+- [x] 历史位于项目 `/.coding-agent/history/`，被 Git 忽略且被六工具路径守卫阻止；文件锁、临时文件、SSE watcher 和后台任务可关闭；
+- [x] Task 状态、Trace、Summary 与有界 Events 通过单 Task JSON 原子替换保持一致，索引可重建；
+- [x] 配置/请求头中的 API Key 与供应商原始响应不进入历史 JSON/日志/事件；会话正文的本地持久化边界已明确告知用户；
+- [x] format migration、restart、故障注入、backend、frontend、browser 测试通过；
+- [x] 经授权的真实模型多轮 smoke 通过，且 M4 独立三轮回归仍为 3/3；
+- [x] README 与 docs 说明存储位置类别、保留、删除、重启和备份/损坏行为；
+- [x] M7 最终交付不存在被推迟的 M6 P0 实现。
 
 ## 15. 风险与止损
 

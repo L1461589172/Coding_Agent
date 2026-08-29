@@ -2,7 +2,15 @@ import asyncio
 
 from app.agent.runtime import AgentRuntimeError, RuntimeNotReady, TaskRunner
 from app.core.events import EventLimits, EventLog
-from app.history.errors import HistoryCapacity, HistoryError
+from app.history.context import SessionContextBuilder
+from app.history.errors import (
+    HistoryCapacity,
+    HistoryError,
+    SessionActive,
+    SessionNotFound,
+    SessionTaskLimit,
+)
+from app.history.models import PersistedTaskData, SessionData
 from app.history.repository import HistoryRepository, InMemoryHistoryRepository
 from app.models.task import Task, TaskError, TaskStatus, utc_now
 from app.services.trace import ExecutionTrace, TraceRecorder, build_task_summary
@@ -17,6 +25,10 @@ class TaskCapacity(Exception):
 
 
 class TaskPersistenceUnavailable(Exception):
+    pass
+
+
+class TaskSessionLimit(Exception):
     pass
 
 
@@ -46,14 +58,22 @@ class TaskManager:
         self._job: asyncio.Task[None] | None = None
         self._create_lock = asyncio.Lock()
 
-    async def create(self, prompt: str) -> Task:
+    async def create(self, prompt: str, session_id: str | None = None) -> Task:
         async with self._create_lock:
             if self._active is not None or self.repository.has_unfinished_task():
                 raise TaskBusy()
             task = Task(prompt=prompt, mode=self.mode)
             trace = ExecutionTrace()
             try:
-                await self.repository.create_with_task(task, trace)
+                if session_id is not None:
+                    context = SessionContextBuilder(self.repository).build(session_id)
+                    task.history_rounds = context.rounds
+                    task.history_task_count = context.candidate_tasks
+                await self.repository.create_with_task(task, trace, session_id)
+            except SessionNotFound:
+                raise
+            except SessionTaskLimit as exc:
+                raise TaskSessionLimit() from exc
             except HistoryCapacity as exc:
                 raise TaskCapacity() from exc
             except HistoryError as exc:
@@ -64,6 +84,32 @@ class TaskManager:
             self._active = task.id
             self._job = asyncio.create_task(self._execute(task))
             return task.model_copy(deep=True)
+
+    def get_session(self, session_id: str) -> SessionData:
+        return self.repository.get_session(session_id)
+
+    def list_sessions(
+        self, limit: int, before: str | None = None
+    ) -> tuple[list[SessionData], str | None]:
+        return self.repository.list_sessions(limit, before)
+
+    def list_session_tasks(
+        self, session_id: str, limit: int, before_ordinal: int | None = None
+    ) -> tuple[list[PersistedTaskData], int | None]:
+        return self.repository.list_session_tasks(session_id, limit, before_ordinal)
+
+    async def delete_session(self, session_id: str) -> None:
+        normalized = self.repository.get_session(session_id).id
+        if self._active is not None:
+            active = self.tasks.get(self._active)
+            if active is not None and active.session_id == normalized:
+                raise SessionActive("Active Session cannot be deleted")
+        await self.repository.delete_session(normalized)
+        for task_id, task in list(self.tasks.items()):
+            if task.session_id == normalized:
+                self.tasks.pop(task_id, None)
+                self.traces.pop(task_id, None)
+                self.logs.pop(task_id, None)
 
     def get(self, task_id: str) -> Task:
         return self.repository.get_task(task_id)

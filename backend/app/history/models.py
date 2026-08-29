@@ -114,6 +114,8 @@ class PersistedTaskData(StrictModel):
     @model_validator(mode="after")
     def validate_event_window(self) -> PersistedTaskData:
         _uuid_text(self.task.id)
+        if self.task.session_id != self.session_id or self.task.ordinal != self.ordinal:
+            raise ValueError("persisted Task identity does not match its Session identity")
         ids = [int(event.id) for event in self.events]
         if any(event.task_id != self.task.id for event in self.events):
             raise ValueError("persisted event belongs to another task")
@@ -211,6 +213,27 @@ class SessionEnvelope(StrictModel):
     kind: Literal["session"] = "session"
     revision: int = Field(ge=1)
     data: SessionData
+
+
+class SessionListItem(StrictModel):
+    id: str
+    title: str
+    created_at: datetime
+    updated_at: datetime
+    task_count: int
+    last_task_id: str | None
+    last_task_status: TaskStatus | None
+    history_incomplete: bool = False
+
+
+class SessionPage(StrictModel):
+    items: list[SessionListItem]
+    next_cursor: str | None = None
+
+
+class TaskPage(StrictModel):
+    items: list[Task]
+    next_before_ordinal: int | None = None
 
 
 class SessionIndexData(StrictModel):

@@ -4,13 +4,18 @@ import type { ComposerIntent } from '../thread/types'
 const props = withDefaults(defineProps<{
   disabled: boolean
   busy?: boolean
-}>(), { busy: false })
+  sessionId?: string
+}>(), { busy: false, sessionId: undefined })
 const prompt = defineModel<string>({ required: true })
 const emit = defineEmits<{ submit: [intent: ComposerIntent] }>()
 
 function submit() {
   const value = prompt.value.trim()
-  if (!props.disabled && value) emit('submit', { kind: 'new_task', prompt: value })
+  if (!props.disabled && value) {
+    emit('submit', props.sessionId
+      ? { kind: 'follow_up', sessionId: props.sessionId, prompt: value }
+      : { kind: 'new_task', prompt: value })
+  }
 }
 </script>
 
@@ -23,7 +28,7 @@ function submit() {
       <span>{{ prompt.length.toLocaleString() }} / 8,000</span>
       <span v-if="busy" class="composer-busy" role="status">当前任务正在执行</span>
       <button type="submit" :disabled="disabled || !prompt.trim()">
-        {{ busy ? '处理中…' : '开始新任务' }}
+        {{ busy ? '处理中…' : sessionId ? '继续会话' : '开始新会话' }}
       </button>
     </div>
   </form>
