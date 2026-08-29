@@ -22,12 +22,12 @@ Workspace
 
 关键决策：
 
-1. 使用 SQLite 做本地单用户持久化，数据库位于 Workspace 之外；
+1. 使用项目根目录 `/.coding-agent/history/` 下的版本化 JSON 文件做本地单用户持久化；目录受 Git 忽略和 Workspace 工具路径守卫保护；
 2. Session 是历史导航和多轮上下文边界，Task 仍是调度、SSE、StopController、Trace 和 Summary 边界；
 3. 同一时刻仍只允许一个全局活动 Task，M6 不引入并发 Agent；
 4. follow-up 不恢复旧 Runtime，不复用旧 `Conversation`、ToolRegistry 状态、`call_id`、StopController 计数或子进程；
 5. 历史上下文只使用有界 TaskRecap，不把完整事件、Diff、stdout/stderr 或旧工具结果重新送入模型；
-6. 事件先持久化再通知 SSE，终态 Task 与终态事件原子收口；
+6. 每个 Task 的状态、Trace、Summary 和有界 Events 保存在同一个 JSON 快照中，以同目录临时文件 + `fsync` + `os.replace` 原子更新，成功后再通知 SSE；
 7. 服务重启时不自动重跑在途任务，而是确定性标记为 `FAILED / SERVER_RESTARTED`；
 8. 保留现有 `POST /api/tasks` 兼容语义：创建新 Session 和首个 Task；follow-up 使用新的 Session 子资源 API；
 9. 删除会话是 P0 隐私能力；搜索、重命名、归档、分支和重新生成不是 P0；
@@ -37,7 +37,7 @@ Workspace
 
 ### 1.1 P0 交付
 
-- SQLite schema、迁移、Repository 和事务边界；
+- JSON format version、目录布局、迁移、Repository、原子替换和进程锁边界；
 - Session、Task、终态 Summary 与有界事件持久化；
 - 服务重启后的历史浏览、SSE replay 与在途任务收敛；
 - 新会话、会话列表、会话详情、follow-up 和删除 API；
@@ -45,7 +45,7 @@ Workspace
 - Sidebar 历史列表、多个 TaskRun 的 Thread、New Conversation 与 Follow-up Composer；
 - recent-context 从旧 task key 到 session key 的兼容迁移；
 - 保留全局单活动任务约束和 M3 SSE/410/204 语义；
-- 持久化安全、保留上限、删除和损坏数据库失败策略；
+- 持久化安全、保留上限、删除、备份和损坏 JSON 的隔离/恢复策略；
 - 单元、集成、重启、浏览器与真实模型 smoke 验收。
 
 ### 1.2 P1（不阻塞 M6）
@@ -59,7 +59,7 @@ Workspace
 
 ### 1.3 明确不做
 
-- 多 Workspace 同时运行、多用户、远程同步或云数据库；
+- 多 Workspace 同时运行、多用户、远程同步或数据库；
 - 多 Agent 并发、分支对话、消息编辑、Regenerate；
 - 服务重启后继续旧进程或自动重放写操作；
 - 把完整源码、Diff、命令输出、供应商响应或 API Key 存入“长期记忆”；
@@ -80,7 +80,7 @@ Session 表示用户可见的一段多轮工作：
 - 不持有 Runtime 对象、EventLog、LLM client 或子进程；
 - 不维护一份可漂移的“会话总答案”。
 
-P0 标题取第一个 Prompt 的单行、去空白、有界摘录；空值不允许进入数据库。标题是导航元数据，不进入模型上下文。
+P0 标题取第一个 Prompt 的单行、去空白、有界摘录；空值不允许写入 Session JSON。标题是导航元数据，不进入模型上下文。
 
 ### 2.2 Task / TaskRun
 
@@ -117,125 +117,149 @@ class TaskRecap(BaseModel):
 - 不包含 raw events、assistant 中间消息、旧工具 arguments/results、Diff、完整 stdout/stderr；
 - COMPLETED 总是可进入候选历史；FAILED 仅带安全错误码和已确认的 Runtime Facts；
 - `SERVER_RESTARTED` 等没有可靠模型结论的任务不得伪造 assistant_result；
-- TaskRecap 可按需生成，P0 不必新增一张 recap 表；若缓存，必须有 schema/version 并能从 Task 重建。
+- TaskRecap 可按需生成，P0 不单独持久化 recap；若未来缓存，必须有 `format_version` 并能从 Task JSON 重建。
 
 ### 2.4 核心不变量
 
 - 全局最多一个 PENDING/RUNNING Task；
-- 新 Task 行必须在返回 202 前提交；
+- 新 Task JSON 快照必须在返回 202 前原子落盘；
 - `session_id + ordinal` 唯一；
 - `task_id + event_id` 唯一；
 - terminal Task 必须有 `finished_at` 与 TaskSummary；
 - terminal 事件对外可见时，GET Task 已能返回相同终态；
 - 已删除 Session 的 Task/Event 不可再读取；
 - 不同 Workspace fingerprint 的 Session 不可互相枚举或 follow-up；
-- 数据库不可用时禁止静默退回内存模式并声称历史已保存。
+- 历史目录不可写、格式版本不兼容或关键 JSON 损坏时禁止静默退回内存模式并声称历史已保存。
 
 ## 3. 持久化位置与配置
 
 ### 3.1 数据目录
 
-新增 `CODING_AGENT_DATA_DIR` 可选配置。默认值使用 `platformdirs.user_data_path("CodingAgent", appauthor=False)`，并明确位于 Workspace 外；该依赖应固定到 lockfile：
-
-- Windows：`%LOCALAPPDATA%/CodingAgent/`；
-- Linux/macOS：遵循平台用户数据目录；
-- 测试：每个测试使用临时目录和独立数据库。
-
-禁止：
-
-- 默认把数据库写进被 Agent 操作的 Workspace；
-- 仅按目录 basename 区分 Workspace；
-- 在 API、SSE、前端或普通日志中暴露数据库绝对路径；
-- 把配置中的 API Key、Authorization、LLM Base URL 或供应商原始响应写入数据库。用户主动在 Prompt 中输入的文本属于会话内容，系统无法保证自动识别全部秘密，UI 与 README 必须提醒不要提交密钥。
-
-Workspace 使用“规范化绝对路径的稳定 SHA-256 fingerprint + 安全展示名”分区。Windows 路径先按真实 Workspace root 解析并执行 `normcase`；fingerprint 不返回 API，也不被当作秘密或身份认证；P0 仍是本地单用户应用。
-
-### 3.2 SQLite 运行参数
-
-连接初始化必须设置并测试：
+默认数据根目录固定为项目根目录下：
 
 ```text
-PRAGMA foreign_keys = ON
-PRAGMA journal_mode = WAL
-PRAGMA busy_timeout = <bounded milliseconds>
+<coding-agent-root>/.coding-agent/history/
+```
+
+项目根目录不能依赖进程当前工作目录推断；实现中从已安装/源码包位置解析应用根，测试则显式注入临时根目录。新增 `CODING_AGENT_HISTORY_DIR` 仅作为高级覆盖项，必须是绝对路径；默认行为仍满足“保存在 Coding Agent 项目目录下”。
+
+安全要求：
+
+- 根目录 `.gitignore` 加入 `/.coding-agent/`；
+- `Workspace.BLOCKED` 加入 `.coding-agent`，即使 Agent 的 Workspace 就是项目根，也不能通过六工具读取、修改或搜索历史；
+- 启动时拒绝历史目录是符号链接、junction/reparse point、普通文件或解析后逃逸项目根的默认路径；
+- 目录和文件使用当前用户权限创建，不向 API、SSE 或普通日志暴露绝对路径；
+- 不按 Workspace basename 隔离历史，使用规范化绝对路径的稳定 SHA-256 fingerprint；Windows 路径先解析真实 root 并执行 `normcase`；
+- fingerprint 只用于本地分区，不返回 API，也不被当作秘密或身份认证；
+- 配置中的 API Key、Authorization、LLM Base URL 和供应商原始响应禁止进入历史 JSON；用户主动在 Prompt 中输入的文本属于会话内容，UI 与 README 必须提醒不要提交秘密。
+
+测试为每个用例注入新的临时 `history_dir`，不得读写开发者真实 `.coding-agent/history/`。
+
+### 3.2 目录布局
+
+P0 使用以下布局：
+
+```text
+.coding-agent/
+└── history/
+    ├── history.lock
+    ├── CURRENT                     # 当前格式目录名，例如 v1
+    ├── v1/
+    │   ├── format.json             # 格式、创建时间、应用兼容版本
+    │   └── workspaces/
+    │       └── <workspace_fingerprint>/
+    │           ├── workspace.json
+    │           ├── index.json      # 可重建的 Session 列表投影
+    │           ├── sessions/
+    │           │   └── <session_id>/
+    │           │       ├── session.json
+    │           │       └── tasks/
+    │           │           └── <ordinal>-<task_id>.json
+    │           └── trash/          # 删除后待清理，不参与任何读取
+    ├── backups/                    # 格式迁移前的有界备份
+    └── quarantine/                 # 损坏文件隔离及安全诊断元数据
+```
+
+ID 必须通过严格 UUID/允许字符校验后才能参与路径拼接；不得把 API 参数原样当文件名。Task 文件名中的 ordinal 使用固定宽度十进制，排序仍以 JSON 内严格校验后的数字为准。
+
+### 3.3 单写入者与资源关闭
+
+- 应用启动时打开 `history.lock` 并获取非阻塞跨进程独占锁；Windows 使用 `msvcrt`，POSIX 使用 `fcntl` 的小型适配层；
+- 同一历史目录已被另一个进程使用时启动失败，不允许两个进程同时写；
+- 进程内所有 Repository 写操作再经过一个 async lock 串行化；
+- JSON 编解码和磁盘 `fsync` 通过明确的线程边界执行，避免阻塞 event loop；
+- shutdown 先停止接收新任务，收敛活动 Task，完成最后一次原子写，再释放文件锁和后台 watcher；
+- 崩溃遗留的临时文件在下次启动时验证后清理，不把临时文件当正式历史。
+
+## 4. JSON 格式、原子性与迁移
+
+### 4.1 文件格式
+
+每个 JSON 文件都包含：
+
+```json
+{
+  "format_version": 1,
+  "kind": "task",
+  "revision": 7,
+  "data": {}
+}
 ```
 
 要求：
 
-- schema migration 在应用开始接受请求前完成；
-- 使用参数化 SQL；
-- Repository 封装连接和事务，不把 SQL 散落在 routes/runtime；
-- 当前异步 Web 路径不得直接长时间执行阻塞数据库操作；使用明确的异步适配层或 `asyncio.to_thread`；
-- shutdown 先停止接收新任务、等待/取消在途 Task 收口，再关闭连接；
-- 数据库损坏、版本过新或迁移失败时启动失败并给出安全错误，不创建空库覆盖旧库。
+- UTF-8、无 BOM、确定性 key 顺序、末尾换行；
+- 时间统一为带时区 UTC ISO 8601；
+- 所有读取继续经过 Pydantic 严格验证，禁止额外字段；
+- 单个 Session/Task/Event 字符串和数组沿用既有显式上限；
+- Task JSON 同时保存 Task fields、`trace`、`summary`、`events[]`、`first_event_id` 和 `last_event_id`；
+- `events[]` 保存的只是经过既有 EventLog payload bound 后的事件，不保存 raw payload；
+- `trace` 是 M5 有界 ExecutionTrace，不是第二份原始日志；
+- `index.json`、`workspace.json` 和 `session.json` 是可从 Task 文件重建的投影，不是不可替代的唯一事实源。
 
-## 4. Schema 与迁移
+### 4.2 原子写入
 
-建议初版 schema：
+所有可变 JSON 使用项目既有原子文件思想，但由 HistoryRepository 独立实现，不调用 Agent 的 `write_file` 工具：
 
-```sql
-CREATE TABLE schema_migrations (
-  version INTEGER PRIMARY KEY,
-  applied_at TEXT NOT NULL
-);
-
-CREATE TABLE workspaces (
-  id TEXT PRIMARY KEY,
-  fingerprint TEXT NOT NULL UNIQUE,
-  display_name TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  last_opened_at TEXT NOT NULL
-);
-
-CREATE TABLE sessions (
-  id TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-  title TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  last_task_id TEXT,
-  task_count INTEGER NOT NULL DEFAULT 0
-);
-
-CREATE TABLE tasks (
-  id TEXT PRIMARY KEY,
-  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-  ordinal INTEGER NOT NULL,
-  prompt TEXT NOT NULL,
-  status TEXT NOT NULL,
-  mode TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  started_at TEXT,
-  finished_at TEXT,
-  result TEXT,
-  error_json TEXT,
-  trace_json TEXT,
-  summary_json TEXT,
-  first_event_id INTEGER,
-  last_event_id INTEGER,
-  UNIQUE(session_id, ordinal)
-);
-
-CREATE TABLE events (
-  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-  event_id INTEGER NOT NULL,
-  type TEXT NOT NULL,
-  timestamp TEXT NOT NULL,
-  step INTEGER,
-  payload_json TEXT NOT NULL,
-  payload_chars INTEGER NOT NULL,
-  PRIMARY KEY(task_id, event_id)
-);
+```text
+构建并严格校验完整新对象
+→ 序列化到同目录唯一临时文件
+→ flush + fsync 临时文件
+→ os.replace(temp, target)
+→ POSIX 尽力 fsync 父目录
+→ 更新内存 revision
 ```
 
-补充索引至少覆盖：
+同一个 Task 的事件、Trace、状态、result/error 和 Summary 位于同一 JSON 文件，因此一次 `os.replace` 就是该 Task 的提交边界。Task JSON 原子落盘后才更新 Session/index 投影并通知 SSE。若投影更新失败，Task 事实仍有效，启动时可重建投影；不得反过来用较新的 index 覆盖 Task。
 
-- Session 列表：`workspace_id, updated_at DESC, id DESC`；
-- Session Task：`session_id, ordinal`；
-- 启动收敛：`tasks(status)`；
-- Event replay 已由复合主键覆盖。
+在既有事件上限（最多 512 条、约 256 KB payload history）下，每个事件重写一个 Task JSON 的成本可控，也换来了比多文件 JSON/JSONL 更清楚的崩溃一致性。若未来上限显著增长，再通过新 format version 引入分片，M6 P0 不预先复杂化。
 
-`error_json`、`trace_json`、`summary_json` 和 `payload_json` 读取后必须继续经过 Pydantic 严格验证；数据库不是可信输入。`trace_json` 是 M5 有界 ExecutionTrace 的持久快照，不是 raw log。迁移不得依赖 ORM 自动猜测。每个 migration 有顺序、事务策略、前向版本拒绝和测试 fixture。
+### 4.3 创建、终态与删除顺序
+
+- 新 Session：先在同一父目录构建完整临时 Session 目录，写入 session + ordinal 1 Task，验证后原子重命名为正式 session_id，再更新 index；
+- follow-up：原子写入新 Task 文件，再原子更新 session.json；若第二步失败，启动重建会发现合法孤立 Task 并补回 Session；
+- 普通事件：在内存副本追加有界 Event、更新 Trace/revision，原子替换 Task JSON，成功后通知 SSE；
+- terminal：一次原子替换同时提交 terminal fields、finished_at、TaskSummary 和唯一 terminal event，再更新 Session/index；
+- 删除：在锁内先识别 current、retained backups 和 quarantine 中可识别的同一 Session 数据，把它们逐一原子移动到同一 `trash/<deletion_id>/` 批次；全部移动成功后才更新 index 并返回 204，失败时尽力回滚且返回安全错误；后台物理清理该批次，重启时继续清理已提交批次；
+- 任一步失败都不得先向客户端声称成功。
+
+### 4.4 格式迁移与备份
+
+- `CURRENT` 指向当前版本目录，内容只允许 `v<positive-int>`；
+- 应用版本低于历史格式时安全拒绝启动，不修改任何文件；
+- 升级时先获取独占锁，把旧版本复制到 `backups/<timestamp>-vN/`，然后迁移到新的 sibling 临时目录；
+- 新目录全量严格校验通过后，原子替换 `CURRENT`；旧版本保留为回退依据；
+- 迁移失败删除/隔离未完成的新目录，保持旧 CURRENT 不变；
+- 备份数量和总字节有显式上限，只在确认没有活动任务时清理最旧备份；
+- P0 至少实现 v1 初始化、v1 幂等打开、未来版本拒绝和一套合成 v0→v1 fixture，证明框架不是只写版本号。
+
+### 4.5 损坏恢复
+
+- `index.json` / `session.json` 损坏：保留原文件到 quarantine，从严格有效的 Task JSON 重建并原子替换；
+- 单个 Task JSON 损坏：隔离该文件，把 Session 标记为 `history_incomplete`，不把残缺内容送入模型；其他 Session 仍可用；
+- `format.json`、CURRENT、目录边界或大量 Task 同时损坏：启动失败并保留现场，禁止创建空历史覆盖；
+- quarantine 记录文件名、错误码、时间和哈希，不复制 Prompt/result 到普通日志；
+- 恢复命令/文档必须先备份，不提供会递归删除整个 `.coding-agent` 的默认操作。
 
 ## 5. Repository 与服务边界
 
@@ -260,19 +284,33 @@ class TaskRepository(Protocol):
     async def reconcile_interrupted(...): ...
 ```
 
-具体方法可以合并到一个 `HistoryRepository`，但事务意图必须清楚。Routes 只做验证和 HTTP 映射；TaskManager 管理单活动任务与执行；AgentRuntime 只消费已装配的历史上下文，不直接查数据库。
+具体方法可以合并到一个 `JsonHistoryRepository`，但原子提交意图必须清楚。Routes 只做验证和 HTTP 映射；TaskManager 管理单活动任务与执行；AgentRuntime 只消费已装配的历史上下文，不直接读文件。
+
+建议代码落点：
+
+```text
+backend/app/history/
+├── models.py        # format envelope、Session、持久 Task 的严格模型
+├── paths.py         # 项目根、ID/fingerprint、链接与边界校验
+├── atomic.py        # 临时文件、fsync、os.replace
+├── lock.py          # msvcrt/fcntl 单写入者锁
+├── migrations.py    # CURRENT、备份、版本迁移与回退
+└── repository.py    # JsonHistoryRepository 与投影重建
+```
+
+不要让 `routes.py` 自行打开 JSON，也不要复用面向 Agent Workspace 的文件工具写历史；这两条路径的权限、错误模型和原子性不同。
 
 ### 5.2 TaskManager 改造
 
 当前 `self.tasks` / `self.logs` 不能继续作为历史事实来源。M6 改为：
 
-- Repository 是 Task/Session/持久事件的事实源；
+- Repository 与严格校验后的 Task JSON 是 Task/Session/持久事件的事实源；
 - TaskManager 只保存当前活动 Task 的锁、后台 asyncio Task、live subscribers 和必要的短期 EventLog；
 - 已终态 Task 从内存淘汰不影响 GET、历史列表或 replay；
 - `max_tasks=100` 不再代表全部历史容量，改成独立的持久化保留策略；
-- 全局 busy 判断同时检查进程内 active 状态和数据库 PENDING/RUNNING 状态。
+- 全局 busy 判断同时检查进程内 active 状态和历史中 PENDING/RUNNING 状态。
 
-测试仍可提供 in-memory repository，但 production 默认必须使用 SQLite；禁止测试替身泄漏成自动降级路径。
+测试仍可提供 in-memory repository，但 production 默认必须使用 `JsonHistoryRepository`；禁止测试替身泄漏成自动降级路径。
 
 ## 6. 事件持久化、SSE 与终态原子性
 
@@ -283,32 +321,33 @@ class TaskRepository(Protocol):
 ```text
 Runtime raw fact
 → 既有 EventLog payload bound
-→ Repository 同事务 append event + 更新有界 trace_json（唯一 task_id + event_id）
+→ 在内存副本追加 event + 更新有界 trace
+→ 原子替换完整 Task JSON（唯一 task_id + event_id）
 → 更新 live EventLog / Condition
 → SSE subscriber 可见
 ```
 
-M6 不对 event payload 再裁剪一次，也不持久化未受限 raw payload。TraceRecorder 仍消费同一个原始结构化事实，但其有界 snapshot 与对应事件在同一事务提交，防止重启后 Summary 事实落后。Repository append 失败时不得先向 SSE 声称事件成功；Task 必须安全失败并进入一致的终态收口。
+M6 不对 event payload 再裁剪一次，也不持久化未受限 raw payload。TraceRecorder 仍消费同一个原始结构化事实；Trace snapshot 和对应 Event 在同一个 Task JSON replacement 中提交，防止重启后 Summary 事实落后。原子替换失败时不得先向 SSE 声称事件成功；Task 必须安全失败并进入一致的终态收口。
 
-### 6.2 终态事务
+### 6.2 终态提交
 
 成功、失败、shutdown 和启动收敛使用同一语义：
 
 ```text
-BEGIN
-  更新 Task terminal fields + TaskSummary
-  追加唯一 terminal event
-  更新 Session updated_at / last_task_id
-COMMIT
+读取并验证当前 Task revision
+→ 在副本中更新 terminal fields + TaskSummary + 唯一 terminal event
+→ revision + 1
+→ 原子替换 Task JSON
+→ 更新可重建的 Session/index 投影
 → 唤醒 SSE subscriber
 ```
 
-唯一约束使重试不会追加两个 terminal 事件。若事务提交结果未知，按 task/event 唯一键重新读取后判断，不盲目重复写。
+terminal event ID、Task terminal status 和 revision 的严格校验使重试不会追加两个终态。若 `os.replace` 结果未知，重新读取正式 Task JSON 判断 revision/terminal event，不盲目重复写；残留临时文件永远不优先于正式文件。
 
 ### 6.3 Replay 与 410
 
-- 活动 Task：数据库历史与 live EventLog 合并时按 event_id 去重；
-- 终态/重启后 Task：直接从数据库流式或分页 replay；
+- 活动 Task：Task JSON 历史与 live EventLog 合并时按 event_id 去重；
+- 终态/重启后 Task：从严格校验后的 Task JSON replay；
 - `after` / `Last-Event-ID` 沿用 M3 校验；
 - cursor 等于最新事件且 Task 已终态返回 204；
 - cursor 小于最早保留事件返回 410，并返回安全的 earliest/latest 元数据；
@@ -317,12 +356,12 @@ COMMIT
 
 ### 6.4 启动收敛
 
-应用启动且 migration 成功后，在开放 API 前扫描当前 Workspace 的 PENDING/RUNNING Task：
+应用启动且格式初始化/迁移、投影重建成功后，在开放 API 前扫描当前 Workspace 的 PENDING/RUNNING Task JSON：
 
 - 标记为 FAILED；
 - `error.code = SERVER_RESTARTED`，错误消息固定且不包含内部路径；
 - 设置 `finished_at`；
-- 从已持久化 `trace_json` 生成 partial TaskSummary；不得扫描可能被裁剪或淘汰的事件来冒充完整 Trace；
+- 从同一 Task JSON 中已持久化的 `trace` 生成 partial TaskSummary；不得扫描可能被裁剪或淘汰的 events 来冒充完整 Trace；
 - 追加下一 event_id 的 `task_failed`；
 - 更新 Session；
 - 不恢复旧 LLM 请求、工具调用、命令进程或写操作。
@@ -356,7 +395,7 @@ DELETE /api/sessions/{session_id}
 `POST /api/sessions/{id}/tasks {prompt}`：
 
 - Session 必须属于当前 Workspace；
-- 事务内分配下一个 ordinal 并更新 task_count；
+- 在 Repository 写锁内从严格校验后的 Tasks 分配下一个 ordinal；Task 原子落盘后再更新 task_count 投影；
 - 全局已有活动 Task 时返回 409；
 - 被删除/跨 Workspace 的 Session 返回 404；
 - 返回 202 Task；
@@ -383,11 +422,11 @@ Session 详情不内嵌无限 Task/Event；Task 使用游标分页。列表使�
 删除是隐私与磁盘上限的必要能力：
 
 - 删除活动 Task 所属 Session 返回 409；
-- 用户确认后事务级 cascade 删除 Session/Tasks/Events；
+- 用户确认后把 current、retained backups/quarantine 中可识别的同 Session 数据移动到一个已验证 trash 批次并从索引移除；后台再递归清理该批次；
 - 成功返回 204；重复删除返回 404；
 - 删除后清理匹配的 recent-context 和前端缓存；
 - live subscriber 若目标在删除前已结束，后续读取返回 404；
-- 普通日志不输出 Prompt/result/数据库路径。
+- 普通日志不输出 Prompt/result/历史目录绝对路径。
 
 ## 8. 多轮上下文装配
 
@@ -502,53 +541,53 @@ recent-context 迁移：
 - 每 Task 最大持久事件数和字符数；
 - Session/Task 列表 page size 与硬上限；
 - TaskRecap 单字段、单 Task 和总历史预算；
-- SQLite 文件大小告警阈值。
+- `.coding-agent/history`、backups、trash 和 quarantine 的总字节告警/硬上限。
 
-自动保留策略只删除 terminal 且非活动 Session，按最旧更新时间处理，并在事务中 cascade。P0 若不启用自动删除，也必须提供显式删除和磁盘增长文档；不能保留无界数据。
+自动保留策略只删除 terminal 且非活动 Session，按最旧更新时间原子移动到 trash 后清理。P0 若不启用自动删除，也必须提供显式删除和磁盘增长文档；不能保留无界数据。
 
 ### 10.2 敏感数据
 
 Prompt、result、文件名和命令摘要可能包含项目敏感信息。历史功能会按设计保存这些受限会话内容，因此要求：
 
 - README 明确本地保存范围、默认路径类别、删除方式和保留策略；
-- 数据库文件使用当前用户权限创建；
+- 历史目录和 JSON 文件使用当前用户权限创建；
 - 日志只记录 ID、状态、安全错误码和计数；
-- 配置/请求头中的 API Key、Authorization 和供应商 raw response 在写库前不可进入 DTO；
-- 测试使用只放在模型配置/Authorization 中、从未写进 Prompt 的 canary secret；扫描数据库文本、日志和导出事件必须找不到；
+- 配置/请求头中的 API Key、Authorization 和供应商 raw response 在写历史前不可进入 DTO；
+- 测试使用只放在模型配置/Authorization 中、从未写进 Prompt 的 canary secret；扫描历史 JSON、日志和导出事件必须找不到；
 - UI 与 README 明确提示：用户若主动把秘密写入 Prompt、代码、文件名或命令，它可能随会话被本地保存，应删除对应 Session 并轮换已泄露密钥；
-- 删除是逻辑立即不可读；SQLite 页/WAL 的物理擦除能力必须如实说明，若需要强擦除列为后续安全增强。
+- 删除后 API 立即不可读，并随后删除 trash 中的普通文件；retained backups/quarantine 中可识别的同一 Session 也必须清除。文件系统快照、外部同步盘或磁盘恢复仍可能保留副本，不能承诺安全擦除。
 
 ## 11. 错误模型
 
 建议新增安全错误码：
 
 - `HISTORY_STORAGE_UNAVAILABLE`：存储不可用；
-- `HISTORY_SCHEMA_UNSUPPORTED`：数据库版本不可兼容；
+- `HISTORY_FORMAT_UNSUPPORTED`：JSON 格式版本不可兼容；
 - `HISTORY_DATA_INVALID`：持久数据验证失败；
 - `SERVER_RESTARTED`：任务因服务重启终止；
 - `SESSION_TASK_LIMIT`：会话 Task 达到上限；
 - `SESSION_CONTEXT_INVALID`：历史 Summary 无法安全装配，但当前任务是否可继续按策略明确；
 - `SESSION_NOT_FOUND` 对外仍映射 404，避免泄露跨 Workspace 存在性。
 
-数据库错误消息不得回显 SQL、绝对路径或 payload。可恢复的单条损坏记录与数据库整体不可用要区分；不得悄悄跳过关键 Task 状态后继续声称一致。
+历史错误消息不得回显绝对路径、Prompt/result 或 payload。可恢复的单条 Task 损坏与格式根/CURRENT 整体不可用要区分；不得悄悄跳过关键 Task 状态后继续声称一致。
 
 ## 12. 实施阶段
 
 ### Phase 0：契约、威胁模型与迁移演练
 
-- 冻结 Session/TaskRecap/API/schema/上限；
-- 确认默认数据目录和 Workspace fingerprint；
-- 写出启动收敛、删除、备份与数据库损坏行为；
-- 先建立 repository contract、migration 和 restart fixtures；
+- 冻结 Session/TaskRecap/API/JSON format/上限；
+- 确认默认 `.coding-agent/history`、工具路径阻止和 Workspace fingerprint；
+- 写出启动收敛、删除、备份与损坏 JSON 的隔离/恢复行为；
+- 先建立 repository contract、format migration、atomic replace 和 restart fixtures；
 - 确认 M5 兼容点已经落地，若未落地只补接口，不并行重写 UI。
 
-### Phase 1：SQLite Repository
+### Phase 1：JSON HistoryRepository
 
-- 数据目录、连接初始化、migration runner；
-- workspaces/sessions/tasks/events schema 与索引；
-- 参数化 CRUD、游标分页、事务和严格 DTO 反序列化；
-- temporary SQLite 与 in-memory repository 契约测试；
-- 关闭连接和迁移失败测试。
+- `.coding-agent` 目录、Git ignore、Workspace.BLOCKED 和跨进程 history.lock；
+- CURRENT、format.json、Workspace/Session/Task JSON 与可重建 index；
+- 严格路径/DTO 校验、游标分页、原子替换、trash/quarantine；
+- temporary JSON repository 与 in-memory repository 契约测试；
+- 文件锁释放、临时文件清理、格式迁移/回退失败测试。
 
 ### Phase 2：持久 Task/Event 生命周期
 
@@ -586,10 +625,10 @@ Prompt、result、文件名和命令摘要可能包含项目敏感信息。历�
 ### Phase 6：保留、安全与资源关闭
 
 - 会话/任务/事件/磁盘上限；
-- cascade 删除和 active-session 保护；
-- WAL/checkpoint/连接关闭、后台 watcher 与 SSE subscriber 释放；
-- canary secret、日志和数据库内容扫描；
-- 故障注入：写库失败、commit 结果未知、损坏 JSON、迁移失败、磁盘满。
+- 原子移动到 trash、异步清理和 active-session 保护；
+- 文件锁/临时文件/后台清理器/watcher/SSE subscriber 释放；
+- canary secret、日志和历史 JSON 内容扫描；
+- 故障注入：临时写失败、`fsync`/`os.replace` 失败、替换结果未知、损坏 JSON、迁移失败、磁盘满。
 
 ### Phase 7：回归与文档收口
 
@@ -602,15 +641,20 @@ Prompt、result、文件名和命令摘要可能包含项目敏感信息。历�
 
 ## 13. 测试矩阵
 
-### 13.1 Repository / Migration
+### 13.1 Repository / Format Migration
 
-- 空库初始化、连续迁移、重复启动幂等；
-- 数据库版本高于程序时安全拒绝；
-- foreign key/cascade/unique/index；
+- 空目录初始化、连续迁移、重复启动幂等；
+- JSON format version 高于程序时安全拒绝且不改文件；
+- CURRENT 切换、备份上限、index/session 投影重建；
+- 同目录临时文件、`fsync`、`os.replace` 和残留临时文件清理；
+- `os.replace` 前失败时旧 JSON 保持可读，替换结果未知时按正式文件 revision 判定；
+- 两个进程争用同一 history.lock 时第二个安全失败；
+- `.coding-agent` 的大小写变体通过 Workspace 六工具读取/搜索/写入均返回 `PATH_NOT_ALLOWED`；
+- 默认 history root 是 symlink/junction/reparse point 或逃逸项目根时拒绝启动；
 - Session 列表 cursor 在相同 updated_at 下稳定；
 - 并发 append_task 只有唯一 ordinal；
-- 数据 JSON 损坏的安全错误；
-- 连接/事务在异常和 shutdown 后关闭；
+- index/session/task/format 各层损坏的重建、隔离或安全失败；
+- 文件句柄/锁在异常和 shutdown 后关闭；
 - Workspace basename 相同但路径不同不会串历史。
 
 ### 13.2 Task / Event 一致性
@@ -623,7 +667,7 @@ Prompt、result、文件名和命令摘要可能包含项目敏感信息。历�
 - PENDING/RUNNING 启动后精确变为一次 SERVER_RESTARTED；
 - cursor 的 200/204/400/410/404；
 - 内存淘汰后历史仍存在；
-- delete cascade 后所有读取均 404。
+- Session 原子移入 trash 后所有读取均 404，重启会继续安全清理。
 
 ### 13.3 多轮上下文
 
@@ -684,9 +728,10 @@ Prompt、result、文件名和命令摘要可能包含项目敏感信息。历�
 - [ ] 旧 raw ToolResult、Diff、stdout/stderr、call_id、StopController 状态不进入新 Task；
 - [ ] 全局单活动 Task 约束在新会话和 follow-up 两条入口都成立；
 - [ ] 删除 terminal Session 后 API/UI 不可再读取，活动 Session 不可删除；
-- [ ] 数据库位于 Workspace 外，连接、WAL、SSE watcher 和后台任务可关闭；
-- [ ] 配置/请求头中的 API Key 与供应商原始响应不进入数据库/日志/事件；会话正文的本地持久化边界已明确告知用户；
-- [ ] migration、restart、故障注入、backend、frontend、browser 测试通过；
+- [ ] 历史位于项目 `/.coding-agent/history/`，被 Git 忽略且被六工具路径守卫阻止；文件锁、临时文件、SSE watcher 和后台任务可关闭；
+- [ ] Task 状态、Trace、Summary 与有界 Events 通过单 Task JSON 原子替换保持一致，索引可重建；
+- [ ] 配置/请求头中的 API Key 与供应商原始响应不进入历史 JSON/日志/事件；会话正文的本地持久化边界已明确告知用户；
+- [ ] format migration、restart、故障注入、backend、frontend、browser 测试通过；
 - [ ] 经授权的真实模型多轮 smoke 通过，且 M4 独立三轮回归仍为 3/3；
 - [ ] README 与 docs 说明存储位置类别、保留、删除、重启和备份/损坏行为；
 - [ ] M7 最终交付不存在被推迟的 M6 P0 实现。
@@ -696,37 +741,38 @@ Prompt、result、文件名和命令摘要可能包含项目敏感信息。历�
 | 风险 | 预防与止损 |
 |---|---|
 | 把历史列表误当成持久化 | 以进程重启测试为第一验收，不接受 localStorage-only |
-| SQLite 阻塞 async loop | Repository 异步边界、短事务、busy timeout 和并发测试 |
-| SSE 已通知但数据库未提交 | persist-before-notify；终态事务提交后再唤醒 |
+| JSON 重写阻塞 async loop | Task JSON 有界；线程化 I/O、单写锁和延迟/压力测试 |
+| SSE 已通知但文件未提交 | atomic replace before notify；终态 Task JSON 成功后再唤醒 |
 | 重启重复执行写操作 | 绝不自动恢复 Runtime；统一 SERVER_RESTARTED 收敛 |
 | 多轮历史挤爆上下文 | 只选完整 TaskRecap；最近优先；复用 M2 最终预算校验 |
 | 历史内容过期误导 Agent | Workspace 是事实源；代码任务继续 read/search |
 | 与工具输出裁剪重复 | 事件只持久化既有受限 payload；recap 不含 raw ToolResult |
 | M5/M6 UI 重写 | 复用 TaskRunSection、Composer intent、Sidebar 数据接口和 recent-context migration |
-| 数据库无限增长 | 显式 Session/Task/Event/天数/磁盘上限与删除能力 |
-| 删除不彻底的错误承诺 | 明确逻辑删除可见性与 SQLite 物理页限制，不夸大安全擦除 |
-| 数据库损坏后静默丢历史 | 启动失败并保留原文件；不自动新建覆盖或回退内存 |
+| JSON 目录无限增长 | 显式 Session/Task/Event/天数/备份/trash/总字节上限与删除能力 |
+| 删除不彻底的错误承诺 | 原子移出可见历史后清理；明确备份/文件系统恢复边界，不夸大安全擦除 |
+| 单个 JSON 损坏扩散 | 每 Task 独立文件、严格校验、quarantine；关键格式损坏时保留现场并拒绝启动 |
+| Agent 修改自己的历史 | `/.coding-agent/` 同时加入 Git ignore 与 Workspace.BLOCKED，并拒绝链接/reparse point |
 | 截止期挤压可靠性 | 先砍搜索、重命名、动画、虚拟化；不砍迁移、预算、重启收敛、删除和资源关闭 |
 
 ## 16. 建议提交划分
 
 ```text
 docs: freeze m6 session persistence and context contracts
-feat(history): add sqlite migrations and repository contracts
+feat(history): add versioned json repository and atomic file contracts
 feat(history): persist task lifecycle and bounded events
 fix(history): reconcile interrupted tasks on startup
 feat(api): add session history follow-up and delete endpoints
 feat(agent): inject bounded session recaps into conversation
 feat(ui): add session history and multi-run conversation thread
 fix(ui): preserve active watcher during history navigation
-test: add migration restart retention and context regressions
+test: add format migration restart retention and context regressions
 docs: document local history privacy recovery and operations
 ```
 
-每个提交必须保持 schema 可迁移和既有测试可运行。涉及 schema 的提交要包含 migration、repository 测试和版本说明；不能只改 Pydantic model 而不提供旧数据库路径。
+每个提交必须保持 JSON format 可迁移和既有测试可运行。涉及 format 的提交要包含 migrator、repository fixture、备份/回退测试和版本说明；不能只改 Pydantic model 而不提供旧历史路径。
 
 ## 17. M6 与 M7 的边界
 
 M6 负责“历史与多轮能力本身可用且可靠”，包括本地持久化、重启行为、隐私删除、资源上限和真实多轮 smoke。M7 只负责最终交付收口：全量复验、README.txt、录屏、密钥/仓库扫描、交付清单和最终提交。
 
-以下内容不得留到 M7：schema/migration、Session API、follow-up 上下文、重启收敛、删除、资源关闭、M6 自动化测试。M7 发现这些缺口时应退回 M6 修复，而不是在交付阶段临时拼接。
+以下内容不得留到 M7：JSON format/migration、原子写与锁、Session API、follow-up 上下文、重启收敛、删除、资源关闭、M6 自动化测试。M7 发现这些缺口时应退回 M6 修复，而不是在交付阶段临时拼接。

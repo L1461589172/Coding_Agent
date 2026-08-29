@@ -4,7 +4,7 @@
 >
 > 建议周期：1 个完整工作日；当前总计划建议为 2026-09-07
 >
-> 前置条件：M5 与 M6 的全部 P0 退出标准已通过，不存在待交付阶段补做的 schema、API、上下文或 UI 实现
+> 前置条件：M5 与 M6 的全部 P0 退出标准已通过，不存在待交付阶段补做的 JSON format、原子持久化、API、上下文或 UI 实现
 >
 > 目标：基于同一个候选提交完成可复现、无密钥、材料一致的最终交付，不在录屏后继续改变产品行为。
 
@@ -16,17 +16,17 @@ M7 只做交付收口：
 - 在干净环境复验后端、前端、API、浏览器、重启、多轮与真实模型 Demo；
 - 更新开发 README.md 和 1000 汉字以内的正式 `README.txt`；
 - 录制不超过 2 分钟、200 MB 的 MP4；
-- 扫描仓库、Git 历史可见范围、日志、数据库样例、报告和视频画面中的敏感信息；
+- 扫描仓库、Git 历史可见范围、日志、历史 JSON 样例、报告和视频画面中的敏感信息；
 - 核对远程仓库、提交、压缩包与材料命名；
 - 形成最终 Go/No-Go 记录。
 
 M7 不实现产品功能。以下缺口一旦发现必须退回相应里程碑：
 
 - M5：TaskRun/Activity/Summary、响应式或无障碍缺口；
-- M6：migration、历史持久化、follow-up、预算、重启收敛、删除、保留或资源关闭缺口；
+- M6：JSON format migration、原子写/锁、历史持久化、follow-up、预算、重启收敛、删除、保留或资源关闭缺口；
 - M1–M4：工具、Agent Loop、SSE 或真实 Demo 回归。
 
-不得为了赶交付在 M7 关闭失败测试、跳过重启步骤、手改数据库、剪掉失败过程后声称成功，或把真实密钥写入录屏配置。
+不得为了赶交付在 M7 关闭失败测试、跳过重启步骤、手改历史 JSON、剪掉失败过程后声称成功，或把真实密钥写入录屏配置。
 
 ## 2. 进入条件
 
@@ -34,7 +34,7 @@ M7 不实现产品功能。以下缺口一旦发现必须退回相应里程碑�
 
 - [ ] M5 与 M6 P0 清单全部完成并有自动化证据；
 - [ ] 工作树中的预期代码和文档均已审查，无来源不明的生成物；
-- [ ] SQLite migration 能从空库启动，并能读取上一 schema fixture；
+- [ ] JSON HistoryRepository 能从空目录初始化，并能迁移/读取上一 format fixture；
 - [ ] 正常重启保留历史，在途 Task 重启后收敛为 `SERVER_RESTARTED`；
 - [ ] follow-up 通过有界 TaskRecap 接入 M2 总预算；
 - [ ] M4 独立三轮 3/3 与 M6 多轮 smoke 已经通过；
@@ -63,18 +63,18 @@ M7 不实现产品功能。以下缺口一旦发现必须退回相应里程碑�
 - Ruff lint/format check；
 - 前端 Vitest、`vue-tsc --noEmit`、production build；
 - browser smoke 覆盖 idle、running、completed、failed、410、refresh、窄屏；
-- M6 repository/migration/restart/retention/context/delete 故障注入测试；
+- M6 JSON repository/format migration/atomic replace/lock/restart/retention/context/delete 故障注入测试；
 - 依赖一致性检查，例如 `pip check` 与 lockfile 安装验证；
 - 测试输出记录真实数量、耗时、warning 和失败，不沿用旧阶段数字。
 
 ### 4.2 干净启动与升级
 
-至少验证两种数据目录：
+至少验证两种隔离的历史目录：
 
-1. 全新空数据目录：启动、创建会话、完成 Task、follow-up、重启、读取、删除；
-2. 上一 schema fixture：备份、迁移、读取历史、follow-up、重启。
+1. 全新空 `.coding-agent/history`：启动、创建会话、完成 Task、follow-up、重启、读取、删除；
+2. 上一 format fixture：备份、CURRENT 切换、迁移、读取历史、follow-up、重启。
 
-不得使用开发者长期数据库作为唯一验收源。测试目录与真实用户数据目录分离；任何清理命令都只针对已确认的专用临时目录。
+不得使用开发者长期历史目录作为唯一验收源。测试 history_dir 与真实 `.coding-agent/history` 分离；任何清理命令都只针对已解析并确认的专用临时目录。
 
 ### 4.3 真实模型
 
@@ -141,7 +141,7 @@ M7 不实现产品功能。以下缺口一旦发现必须退回相应里程碑�
 - tracked/untracked 文件；
 - 可见 Git 历史和 diff；
 - `.env*`、日志、pytest 输出、M4/M6 报告；
-- SQLite 演示数据库及 WAL/SHM；
+- 演示 History JSON、backups、trash、quarantine 和残留临时文件；
 - 浏览器网络/控制台截图；
 - 视频逐段画面与音轨；
 - README.txt、压缩包清单和文件元数据。
@@ -150,14 +150,14 @@ M7 不实现产品功能。以下缺口一旦发现必须退回相应里程碑�
 
 - `.env.example` 只能包含占位符，不能包含可用 token；若用户曾把真实值放入该文件，立即从工作树和交付材料移除并轮换密钥；
 - 使用 canary/模式扫描加人工复核，不能只搜索一个供应商前缀；
-- Prompt 是持久会话正文，若演示时误输入秘密，应删除 Session、重建演示数据库并轮换秘密；
+- Prompt 是持久会话正文，若演示时误输入秘密，应删除 Session、清理相应备份/演示历史并轮换秘密；
 - 发现密钥进入 Git 历史时停止交付，由用户决定历史清理和远程处置；不得只删除最新文件后继续；
 - 扫描报告保存规则和结论，不回显完整疑似密钥。
 
 ## 8. 仓库与压缩包
 
 - 核对最终分支、commit SHA、tag（若要求）、远程地址和公开可访问性；
-- 检查仓库不含 `.env`、用户数据库、WAL/SHM、日志、node_modules、虚拟环境、测试缓存、临时 Workspace 或超大构建产物；
+- 检查 Git/压缩包不含 `.env`、`.coding-agent` 用户历史、日志、node_modules、虚拟环境、测试缓存、临时 Workspace 或超大构建产物；
 - README 链接、相对路径和命令在仓库克隆后仍有效；
 - 压缩包只包含要求的 `README.txt`、MP4 和明确要求的其他材料；
 - 压缩包按姓名/要求命名，解压后无多余嵌套层级和隐藏敏感文件；
@@ -175,7 +175,7 @@ M7 不实现产品功能。以下缺口一旦发现必须退回相应里程碑�
 ### Phase 1：完整验证
 
 - 确定性测试、构建、浏览器 smoke；
-- 空库/升级库/restart/delete；
+- 空历史目录/旧 format fixture/restart/delete；
 - M4 3/3 和 M6 多轮真实 smoke；
 - 记录一份脱敏最终验证报告。
 
@@ -187,7 +187,7 @@ M7 不实现产品功能。以下缺口一旦发现必须退回相应里程碑�
 
 ### Phase 3：最终安全检查
 
-- 对冻结后的仓库、历史、报告、数据库、视频和材料重新扫描；
+- 对冻结后的仓库、Git 历史、History JSON、报告、视频和材料重新扫描；
 - 检查 `.gitignore` 与压缩包内容；
 - 任何代码或配置修复后回到 Phase 1 的受影响部分。
 
@@ -205,13 +205,13 @@ M7 不实现产品功能。以下缺口一旦发现必须退回相应里程碑�
 
 - [ ] 候选 commit 与 README.txt、视频、报告一致；
 - [ ] 后端、lint、前端单测/类型/构建、browser smoke 全部通过；
-- [ ] 空库、migration、重启收敛、历史恢复、follow-up 和删除通过；
+- [ ] 空目录、format migration、原子替换/锁、重启收敛、历史恢复、follow-up 和删除通过；
 - [ ] M4 真实模型连续 3/3，M6 真实多轮 smoke 通过；
 - [ ] M5 Activity/Summary 与 M6 历史 Thread 不伪造执行事实；
 - [ ] README.txt ≤ 1000 汉字，命令、仓库地址、限制和历史隐私说明正确；
 - [ ] MP4 ≤ 2 分钟且 ≤ 200 MB，可播放、可读、无敏感画面；
-- [ ] 工作树、Git 历史可见范围、日志、数据库样例、报告、视频和压缩包通过敏感信息检查；
-- [ ] 仓库不含用户历史数据库、`.env`、缓存或临时工作区；
+- [ ] 工作树、Git 历史可见范围、日志、History JSON 样例、报告、视频和压缩包通过敏感信息检查；
+- [ ] Git 与压缩包不含 `.coding-agent` 用户历史、`.env`、缓存或临时工作区；
 - [ ] 最终远程 SHA（若已授权发布）与材料记录一致；
 - [ ] 压缩包命名和内容正确，已重新解压检查；
 - [ ] 没有把 M5/M6 P0 缺口作为“交付后修复”。
@@ -231,7 +231,7 @@ frontend_tests:
 browser_smoke:
 m4_real_model:
 m6_multiturn:
-migration_restart_delete:
+json_format_atomic_restart_delete:
 secret_scan:
 readme_txt_chars:
 video_duration_and_size:
@@ -240,4 +240,4 @@ known_limitations:
 go_no_go:
 ```
 
-该记录只描述证据，不复制完整命令输出、Prompt、数据库内容或供应商响应。
+该记录只描述证据，不复制完整命令输出、Prompt、History JSON 内容或供应商响应。

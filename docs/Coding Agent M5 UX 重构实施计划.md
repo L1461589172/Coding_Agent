@@ -51,7 +51,7 @@
 
 ### 1.3 明确不做
 
-- 多轮 Conversation UI、任务历史列表和数据库持久化；这些属于 M6；
+- 多轮 Conversation UI、任务历史列表和 JSON 文件持久化；这些属于 M6；
 - 用户取消 API；
 - Monaco、内置 Terminal、IDE 文件树、多 Repo、多 Workspace；
 - Git 历史、Git 工具、多用户、多 Agent、插件系统；

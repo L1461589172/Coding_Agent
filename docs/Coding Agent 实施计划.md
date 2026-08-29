@@ -15,7 +15,7 @@
 | 08-30 | API 与前端时间线 | 完整真实执行事件 | M3 已实现并通过确定性 API/UI 契约验证 |
 | 08-31 | Demo 打通 | 真实模型连续成功至少 3 次 | 已实现；正式验收连续 3/3 成功 |
 | 08-29–09-01 | 可组合 TaskRun UX | 自然语言活动、完整 Trace/Summary、恢复与无障碍不回退；为多 Task 组合保留接口 | 计划已审查；详见 M5 UX 重构实施计划 |
-| 09-02–09-06 | 历史任务与多轮会话 | SQLite 持久化、重启收敛、Session/follow-up API、有界历史上下文与历史 UI | 计划已制定；详见 M6 实施计划 |
+| 09-02–09-06 | 历史任务与多轮会话 | 项目内版本化 JSON 持久化、原子写/锁、重启收敛、Session/follow-up API、有界历史上下文与历史 UI | 计划已制定；详见 M6 实施计划 |
 | 09-07 | 最终交付 | 全量复验、README.txt、视频、密钥扫描、材料检查和最终提交 | M7 待实施，不推断远程仓库状态 |
 
 ## 2. 工作分解
@@ -97,17 +97,17 @@
 
 ### M6：历史任务与多轮对话（09-02 至 09-06）
 
-- [ ] 在 Workspace 外建立 SQLite 数据目录、显式 schema migration、Repository、事务与资源关闭边界。
+- [ ] 在项目 `/.coding-agent/history/` 建立版本化 JSON Repository、跨进程单写锁、原子替换、格式迁移和资源关闭边界；目录受 Git ignore 与 Workspace.BLOCKED 双重保护。
 - [ ] 持久化 Session、Task、TaskSummary 和受既有上限约束的 Events；Repository 取代内存历史事实源。
 - [ ] 保持 `POST /api/tasks` 向后兼容，并新增 Session 列表/详情/Task 分页/follow-up/删除 API。
 - [ ] 实现 persist-before-SSE、terminal 原子收口、重启后 durable replay 与 PENDING/RUNNING → `SERVER_RESTARTED` 幂等收敛。
 - [ ] 从历史 Task/TaskSummary 确定性构建 TaskRecap；复用 M2 字符/token 总预算，按最近完整回合选择，不重放旧工具输出。
 - [ ] 接入 M5 ConversationThread/TaskRunSection：历史 Sidebar、多 TaskRun、New Conversation、Follow-up、URL/recent-context 恢复。
 - [ ] 保持全局单活动 Task；浏览旧会话时 active SSE watcher 继续工作，follow-up 使用新的 Conversation/StopController/call_id 生命周期。
-- [ ] 完成删除、保留上限、数据库损坏/写入失败、WAL/连接/SSE 关闭和 canary secret 验证。
-- [ ] 通过 migration、restart、context、API、browser E2E；经授权完成最小真实模型多轮 smoke，并保持 M4 独立 3/3。
+- [ ] 完成原子移入 trash 的删除、保留上限、损坏 JSON 隔离/重建、`fsync`/`os.replace` 失败、文件锁/SSE 关闭和 canary secret 验证。
+- [ ] 通过 format migration、restart、context、API、browser E2E；经授权完成最小真实模型多轮 smoke，并保持 M4 独立 3/3。
 
-详细 schema、API、上下文算法、测试矩阵和退出标准见 [M6 历史任务与多轮对话实施计划](Coding%20Agent%20M6%20历史任务与多轮对话实施计划.md)。搜索、重命名、归档、分支和自动长期记忆均为 P1/P2，不得挤压持久化一致性、隐私删除和上下文预算。
+详细 JSON format、目录布局、原子性、API、上下文算法、测试矩阵和退出标准见 [M6 历史任务与多轮对话实施计划](Coding%20Agent%20M6%20历史任务与多轮对话实施计划.md)。搜索、重命名、归档、分支和自动长期记忆均为 P1/P2，不得挤压持久化一致性、隐私删除和上下文预算。
 
 ### M7：交付（09-07）
 
@@ -119,7 +119,7 @@
 - [ ] 检查视频不超过 200 MB，压缩 README.txt 与视频为姓名命名的 zip。
 - [ ] 按最终确认的提交截止时间提前完成最后一次仓库推送，截止后不再推送。
 
-M7 不实现 M6 功能。若 schema/migration、重启收敛、follow-up 上下文、删除或资源关闭仍有缺口，返回 M6 修复后再开始最终录制。
+M7 不实现 M6 功能。若 JSON format/migration、原子写/锁、重启收敛、follow-up 上下文、删除或资源关闭仍有缺口，返回 M6 修复后再开始最终录制。
 
 完整的进入条件、候选冻结、复验矩阵、录屏脚本、安全扫描、压缩包和 Go/No-Go 规则见 [M7 最终交付计划](Coding%20Agent%20M7%20最终交付计划.md)。
 
@@ -129,7 +129,7 @@ M7 不实现 M6 功能。若 schema/migration、重启收敛、follow-up 上下�
 
 | 层级 | 方法 | 必测内容 |
 |---|---|---|
-| 单元/工具集成 | pytest | Workspace、工具、LLM HTTP、上下文、事件、Agent Loop、M3 恢复、M4 Demo、M5 Trace/Summary、M6 Repository/migration/context；项目当前基线为 248 项，新增实现后以最终实测为准 |
+| 单元/工具集成 | pytest | Workspace、工具、LLM HTTP、上下文、事件、Agent Loop、M3 恢复、M4 Demo、M5 Trace/Summary、M6 JSON Repository/format migration/context；项目当前基线为 248 项，新增实现后以最终实测为准 |
 | 无模型工具流程 | tests/test_shell_tools.py / test_command_bytecode.py | 真实写入、pytest 失败、替换与复验；固定时间戳旧缓存及重复执行验证 |
 | 组件 | Fake LLM | 调用 ID 回填、参数错误恢复、并行调用、预算裁剪、步数/重复停止和真实本地修复流程 |
 | API | FastAPI TestClient | 任务冲突、Session/follow-up/delete、游标分页、事件持久回放、服务重启与终态一致性 |
@@ -142,9 +142,9 @@ M7 不实现 M6 功能。若 schema/migration、重启收敛、follow-up 上下�
 2. **前端耗时超预期**：保留单页 Timeline，优先删文件树、代码查看器和高级 Diff。
 3. **SSE 重连复杂**：M5 沿用当前有界内存恢复；M6 改为持久事件 replay，继续保留 410/204 语义，并用启动收敛替代重启后的在途任务 404。
 4. **Shell 安全不足**：只在专用 Demo Workspace、普通用户权限下演示，并明确非强沙箱。
-5. **时间不足**：P1 全部停止；必须保住工具闭环、M5 TaskRun/Summary、M6 migration/重启收敛/预算/删除/资源关闭和 M7 真实验证。若 09-02 是不可变外部截止，应明确缩减里程碑或延期，不得把不可靠的持久化伪装成完成。
+5. **时间不足**：P1 全部停止；必须保住工具闭环、M5 TaskRun/Summary、M6 JSON 原子写/format migration/重启收敛/预算/删除/资源关闭和 M7 真实验证。若 09-02 是不可变外部截止，应明确缩减里程碑或延期，不得把不可靠的持久化伪装成完成。
 6. **D001 字节码缓存复用（已修复）**：保留确定性回归和命令级缓存隔离，不靠等待一秒或改变内容长度避免失败；后续改命令策略时持续验证子进程继承与清理。
-7. **历史存储敏感数据**：数据库在 Workspace 外，持久 payload 有界，日志脱敏，提供删除和保留策略；不保存 API Key、供应商 raw response 或旧工具完整输出。
+7. **历史存储敏感数据**：`/.coding-agent/history/` 被 Git 与工具层双重隔离，持久 payload 有界，日志脱敏，提供删除和保留策略；不保存配置 API Key、供应商 raw response 或旧工具完整输出。
 
 ## 5. 每日完成检查
 
@@ -172,7 +172,7 @@ M7 不实现 M6 功能。若 schema/migration、重启收敛、follow-up 上下�
 - [ ] Timeline 与最终总结没有伪造或遗漏失败。
 - [ ] 历史在服务重启后仍可浏览，在途任务不会被自动重放。
 - [ ] follow-up 只注入有界完整 TaskRecap，且继续通过 M2 字符/token 总预算。
-- [ ] 会话可删除，数据库/事件/日志不包含 API Key 或供应商原始响应。
+- [ ] 会话可删除，历史 JSON/事件/日志不包含配置 API Key 或供应商原始响应。
 - [ ] M5/M6/M7 的实现与文档边界一致，没有把 P0 遗留到交付阶段。
 - [ ] 仓库与交付材料不存在密钥。
 - [ ] README.txt、视频、公开仓库和 zip 满足格式要求。

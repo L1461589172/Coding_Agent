@@ -14,7 +14,7 @@
 | [M3 API 与 UI 完成说明](Coding%20Agent%20M3%20API%20与%20UI%20完成说明.md) | Tool/Shell/File Change 卡片、运行时契约校验、SSE 与整页恢复、终态一致性 |
 | [M4 Demo 与可靠性完成说明](Coding%20Agent%20M4%20Demo%20与可靠性完成说明.md) | 真实 Bug 样例、Prompt 调优、三轮真实模型指标、双重 pytest 验收 |
 | [M5 UX 重构实施计划](Coding%20Agent%20M5%20UX%20重构实施计划.md) | 可组合 TaskRun、Activity 聚合、Trace/Summary、无障碍和 M6 前向兼容接口 |
-| [M6 历史任务与多轮对话实施计划](Coding%20Agent%20M6%20历史任务与多轮对话实施计划.md) | SQLite 持久化、重启收敛、Session/follow-up API、有界历史上下文、隐私与测试矩阵 |
+| [M6 历史任务与多轮对话实施计划](Coding%20Agent%20M6%20历史任务与多轮对话实施计划.md) | `/.coding-agent/history/` 版本化 JSON、原子写/锁、重启收敛、Session/follow-up、有界上下文与隐私 |
 | [M7 最终交付计划](Coding%20Agent%20M7%20最终交付计划.md) | 候选冻结、全量复验、README.txt、录屏、敏感信息扫描、材料与 Go/No-Go |
 | [D001 修复说明](Coding%20Agent%20D001%20修复说明.md) | 命令级字节码缓存策略、确定性回归、重复运行记录与三类缓存/权限问题区分 |
 | [M1 只读工具实现说明](Coding%20Agent%20M1%20只读工具实现说明.md) | 当前只读工具参考；首次实现清单和 104 项测试属于历史阶段 |
@@ -32,7 +32,7 @@
 | M3 API/UI | 创建/查询、严格响应校验、专用 Tool/Shell/File Change 卡片、有界重连、整页恢复与终态核对 | 已完成；跨进程持久化不在范围内 |
 | M4 Demo | 初始失败的真实 Bug、可重复验收器、Prompt 调优；真实模型连续 3/3 成功 | 已完成；不外推为任意任务 100% 成功率 |
 | M5 UX | 已审查的 ConversationThread 壳层、可组合 TaskRun、Activity/Trace/Summary、响应式与无障碍计划 | 待实施；P1 不得挤压 M6 |
-| M6 历史/多轮 | 已完成完整架构与实施计划 | 待实现 SQLite 历史、重启收敛、Session/follow-up、历史预算、删除与 UI |
+| M6 历史/多轮 | 已完成 JSON 文件架构与实施计划 | 待实现项目内 JSON 历史、原子写/锁、重启收敛、Session/follow-up、历史预算、删除与 UI |
 | M7 交付 | 开发说明与测试基础 | 待 M5/M6 完成后制作 README.txt、视频、密钥扫描与最终提交材料 |
 
 `/api/meta` 的六个 `tool_statuses` 均为 `ready`。模型三项配置完整时为 `agent_ready=true`、`mode=agent` 并运行真实 Loop；配置不完整时为 scaffold，任务以 `NOT_IMPLEMENTED` 结束且不执行工具。仍没有独立 HTTP 工具执行入口。

@@ -492,10 +492,10 @@ TaskManager / Runtime -> core/events.py（EventLog）
 | P1：Workspace / 静态托管 | 文件树、Code Viewer、Diff Viewer | 文件查询 API、前端静态产物托管 | 未来扩展 `components/`、`api/routes.py`、`main.py`；新增文件名尚未确定 |
 | M4：已实现 | 展示真实改动、命令结果和终态；三轮 3/3 成功 | Calculator Bug 的 Agent/独立 pytest 双重验收已完成 | `demo_workspace/`、`scripts/run_m4_demo.py`、`tests/test_m4_demo.py` |
 | M5：已审查，待实施 | ConversationThread 壳层、可组合 TaskRun、确定性活动聚合、File/Command 附件、响应式与无障碍 | 完整有界 Trace、成功/失败 Summary 和 M6 前向兼容接口 | `frontend/src/`、`models/task.py`、`services/tasks.py`；详见 M5 UX 计划 |
-| M6：已规划，待实施 | 历史 Sidebar、多 TaskRun Thread、新会话与 follow-up | SQLite migration/Repository、Session/Task/Event 持久化、重启收敛、有界 TaskRecap、删除与保留 | `backend/app/`、`frontend/src/`；详见 M6 历史任务与多轮对话计划 |
+| M6：已规划，待实施 | 历史 Sidebar、多 TaskRun Thread、新会话与 follow-up | 项目 `/.coding-agent/history/` 下版本化 JSON Repository、原子替换/锁、重启收敛、有界 TaskRecap、删除与保留 | `backend/app/`、`frontend/src/`；详见 M6 历史任务与多轮对话计划 |
 | M7：最终交付 | 不新增产品功能 | README.txt、视频、密钥扫描和最终提交检查 | 根目录与交付材料；不由 M5/M6 P1 挤占 |
 
-M6 只纳入本地单用户 Session/Task/Event 持久化和有界多轮 TaskRecap；多用户、并行任务、向量/自动长期记忆仍不在范围内。后续新增或完成文件时，应同时更新本节“已实现/待实现”列与实施计划，避免仅以存在同名文件判断功能完成。
+M6 只纳入项目内 JSON 文件形式的本地单用户 Session/Task/Event 持久化和有界多轮 TaskRecap；不引入数据库，多用户、并行任务、向量/自动长期记忆仍不在范围内。后续新增或完成文件时，应同时更新本节“已实现/待实现”列与实施计划，避免仅以存在同名文件判断功能完成。
 
 ## 10. 关键决策及理由
 

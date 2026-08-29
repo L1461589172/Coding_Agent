@@ -316,7 +316,7 @@ docs/           # 设计、实施计划与修改说明
 
 ## 项目文档
 
-- [M6 历史任务与多轮对话实施计划](docs/Coding%20Agent%20M6%20历史任务与多轮对话实施计划.md)：SQLite 历史、重启收敛、Session/follow-up、有界 TaskRecap、隐私删除与验收矩阵。
+- [M6 历史任务与多轮对话实施计划](docs/Coding%20Agent%20M6%20历史任务与多轮对话实施计划.md)：项目内版本化 JSON 历史、原子写、重启收敛、Session/follow-up、有界 TaskRecap 与隐私删除。
 - [M5 UX 重构实施计划](docs/Coding%20Agent%20M5%20UX%20重构实施计划.md)：可组合 TaskRun、确定性 Activity/Trace/Summary 与 M6 前向兼容接口。
 - [M7 最终交付计划](docs/Coding%20Agent%20M7%20最终交付计划.md)：候选冻结、全量复验、README.txt、录屏、安全扫描和最终 Go/No-Go。
 - [M4 Demo 与可靠性完成说明](docs/Coding%20Agent%20M4%20Demo%20与可靠性完成说明.md)：真实 Bug、Prompt 调优、三轮真实模型指标和独立复验。
