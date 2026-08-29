@@ -72,11 +72,7 @@ def run_pytest() -> subprocess.CompletedProcess[str]:
 
 
 def decode_sse(text: str) -> list[dict[str, Any]]:
-    return [
-        json.loads(line[6:])
-        for line in text.splitlines()
-        if line.startswith("data: ")
-    ]
+    return [json.loads(line[6:]) for line in text.splitlines() if line.startswith("data: ")]
 
 
 def run_once(number: int) -> dict[str, Any]:
@@ -106,6 +102,8 @@ def run_once(number: int) -> dict[str, Any]:
     tool_results = [event for event in events if event["type"] == "tool_finished"]
     file_events = [event for event in events if event["type"] == "file_changed"]
     command_events = [event for event in events if event["type"] == "command_finished"]
+    summary = task.get("summary") or {}
+    verification_summary = summary.get("verification") or {}
     checks = {
         "baseline_failed": baseline.returncode != 0,
         "task_completed": task["status"] == "COMPLETED",
@@ -120,6 +118,9 @@ def run_once(number: int) -> dict[str, Any]:
             for event in command_events
         ),
         "independent_tests_passed": verification.returncode == 0,
+        "terminal_summary_present": bool(summary),
+        "summary_recorded_change": "calculator.py" in summary.get("files_changed", []),
+        "summary_verification_passed": verification_summary.get("passed") is True,
     }
     failures = [name for name, passed in checks.items() if not passed]
     return {

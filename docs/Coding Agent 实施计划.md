@@ -3,7 +3,7 @@
 > 计划周期：2026-08-27 至 2026-09-07（因新增 M6 持久化与多轮会话，建议重新基线）
 > 交付目标：先完成可重复的端到端 Agent 闭环，再补展示与提交材料。任何 P1 功能不得阻塞 P0。
 
-> 2026-08-29 更新：M0 至 M4 已实现；M5 已改为可组合 TaskRun UX，尚未实施；M6 新增历史任务持久化与多轮会话；最终交付统一顺延为 M7。原 09-02 截止不足以可靠完成新增范围，建议以 09-07 为新基线。详见 [当前状态](README.md)、[M4 说明](Coding%20Agent%20M4%20Demo%20与可靠性完成说明.md)、[M5 计划](Coding%20Agent%20M5%20UX%20重构实施计划.md) 与 [M6 计划](Coding%20Agent%20M6%20历史任务与多轮对话实施计划.md)。
+> 2026-08-29 更新：M0 至 M5 已实现；M6 为历史任务持久化与多轮会话；最终交付为 M7。详见 [当前状态](README.md)、[M5 完成说明](Coding%20Agent%20M5%20UX%20重构完成说明.md) 与 [M6 计划](Coding%20Agent%20M6%20历史任务与多轮对话实施计划.md)。
 
 ## 1. 里程碑
 
@@ -14,7 +14,7 @@
 | 08-29 | Agent Loop 闭环 | 模型调用、结果回填、终止生效 | M2 已完整实现并通过确定性测试 |
 | 08-30 | API 与前端时间线 | 完整真实执行事件 | M3 已实现并通过确定性 API/UI 契约验证 |
 | 08-31 | Demo 打通 | 真实模型连续成功至少 3 次 | 已实现；正式验收连续 3/3 成功 |
-| 08-29–09-01 | 可组合 TaskRun UX | 自然语言活动、完整 Trace/Summary、恢复与无障碍不回退；为多 Task 组合保留接口 | 计划已审查；详见 M5 UX 重构实施计划 |
+| 08-29–09-01 | 可组合 TaskRun UX | 自然语言活动、完整 Trace/Summary、恢复与无障碍不回退；为多 Task 组合保留接口 | 已实现并重新取得 M4 真实模型 3/3；详见 M5 完成说明 |
 | 09-02–09-06 | 历史任务与多轮会话 | 项目内版本化 JSON 持久化、原子写/锁、重启收敛、Session/follow-up API、有界历史上下文与历史 UI | 计划已制定；详见 M6 实施计划 |
 | 09-07 | 最终交付 | 全量复验、README.txt、视频、密钥扫描、材料检查和最终提交 | M7 待实施，不推断远程仓库状态 |
 
@@ -43,7 +43,7 @@
 
 退出标准：不经过模型，工具层测试全部通过；任何文件写入都能给出可审计结果。
 
-历史记录为 172 passed，随后复验发现 D001（171 passed / 1 failed）。M1 修复阶段达到 194 passed，M2 达到 242，M3 达到 246；M4 新增 2 项，当前全量为 248 passed，并有三轮真实模型验收。POSIX 分支仍待实机验收。
+历史记录为 172 passed，随后复验发现 D001（171 passed / 1 failed）。M1 修复阶段达到 194 passed，M2 达到 242，M3 达到 246，M4 达到 248；M5 当前全量为 254 passed，并有新的三轮真实模型验收。POSIX 分支仍待实机验收。
 
 ### M2：Agent Runtime（08-29）
 
@@ -86,12 +86,12 @@
 
 ### M5：可组合 TaskRun UX（08-29 至 09-01）
 
-- [ ] 完成当前 idle/running/completed/failed 与窄屏视觉基线，并确认可实施视觉目标。
-- [ ] 实现 ConversationThread 壳层、单个 TaskRunSection、确定性 Tool Activity、`call_id` 聚合及 File/Command 附件。
-- [ ] 实现不依赖 EventLog 回读的完整 ExecutionTrace 和成功/失败 TaskSummary。
-- [ ] 保持刷新、410、404、204、终态一致性、安全边界和单 Task 语义。
-- [ ] 拆分 activeTask / selectedContext；Composer 只发意图；Sidebar、recent-context 和 TaskRun key 可平滑接入多轮历史。
-- [ ] 完成前端单测基础、无障碍/窄屏/browser smoke，并重新取得 M4 真实模型 3/3。
+- [x] 完成当前 idle/running/completed/failed 与窄屏视觉基线，并确认可实施视觉目标。
+- [x] 实现 ConversationThread 壳层、单个 TaskRunSection、确定性 Tool Activity、`call_id` 聚合及 File/Command 附件。
+- [x] 实现不依赖 EventLog 回读的完整 ExecutionTrace 和成功/失败 TaskSummary。
+- [x] 保持刷新、410、404、204、终态一致性、安全边界和单 Task 语义。
+- [x] 拆分 activeTask / selectedContext；Composer 只发意图；Sidebar、recent-context 和 TaskRun key 可平滑接入多轮历史。
+- [x] 完成前端单测基础、无障碍/窄屏/browser smoke，并重新取得 M4 真实模型 3/3。
 
 详细契约、阶段和止损规则见 [M5 UX 重构实施计划](Coding%20Agent%20M5%20UX%20重构实施计划.md)。M5 不显示伪历史或伪 follow-up，但不得把整个 Conversation 建模成一个 Task。P1 视觉增强不得挤压 M6。
 
@@ -129,7 +129,7 @@ M7 不实现 M6 功能。若 JSON format/migration、原子写/锁、重启收�
 
 | 层级 | 方法 | 必测内容 |
 |---|---|---|
-| 单元/工具集成 | pytest | Workspace、工具、LLM HTTP、上下文、事件、Agent Loop、M3 恢复、M4 Demo、M5 Trace/Summary、M6 JSON Repository/format migration/context；项目当前基线为 248 项，新增实现后以最终实测为准 |
+| 单元/工具集成 | pytest | Workspace、工具、LLM HTTP、上下文、事件、Agent Loop、M3 恢复、M4 Demo、M5 Trace/Summary；当前基线为 254 项，M6 Repository/migration/context 测试尚待新增 |
 | 无模型工具流程 | tests/test_shell_tools.py / test_command_bytecode.py | 真实写入、pytest 失败、替换与复验；固定时间戳旧缓存及重复执行验证 |
 | 组件 | Fake LLM | 调用 ID 回填、参数错误恢复、并行调用、预算裁剪、步数/重复停止和真实本地修复流程 |
 | API | FastAPI TestClient | 任务冲突、Session/follow-up/delete、游标分页、事件持久回放、服务重启与终态一致性 |

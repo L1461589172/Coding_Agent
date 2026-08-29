@@ -3,9 +3,19 @@ import json
 from collections.abc import AsyncIterator
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Protocol
 
 from app.models.event import TERMINAL_EVENTS, AgentEvent, EventType
+
+
+class EventPublisher(Protocol):
+    async def publish(
+        self,
+        task_id: str,
+        kind: EventType,
+        payload: dict[str, Any],
+        step: int = 0,
+    ) -> AgentEvent: ...
 
 
 @dataclass(frozen=True)

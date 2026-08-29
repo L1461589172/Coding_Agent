@@ -7,6 +7,8 @@
 > 前置条件：M1–M4 已完成；M4 固定 Demo 最近一次真实模型验收为 3/3
 >
 > 目标：不改变 LLM、Tool Schema、StopController 和工具执行语义，把结构化执行事实组织成易读、可恢复、可验证的单次任务运行（TaskRun），并为 M6 的历史任务与多轮会话保留稳定组合接口。
+>
+> 实施状态：已于 2026-08-29 完成；实测与边界见 [M5 完成说明](Coding%20Agent%20M5%20UX%20重构完成说明.md)。
 
 ## 0. 审查结论与本次修订
 
@@ -546,22 +548,22 @@ frontend/src/
 
 只有同时满足以下条件才完成：
 
-- [ ] 已有经过检查的桌面/窄屏视觉目标，不以 ASCII 图替代；
-- [ ] 页面是 Sidebar + ConversationThread + 单个 TaskRunSection + Composer；
-- [ ] 用户 Prompt、非空 Agent Message、Recovery 和失败终态清楚；
-- [ ] 六工具默认使用确定性自然语言；
-- [ ] 同一 `call_id` 只有一个主 Activity，File/Command 是附件；
-- [ ] Diff、stdout/stderr、timeout、cleanup 和两类 truncated 均不误导；
-- [ ] Summary Facts 来自完整 Trace，模型 Narrative 不覆盖事实；
-- [ ] completed 和 failed（含 shutdown）均有 terminal Summary；
-- [ ] 刷新、410、404、204 和终态查询保持 M3 语义；
-- [ ] 新任务文案不暗示多轮上下文或取消能力；
-- [ ] `buildTaskRun` 可被多 Task 组合复用，Task/Event/Tool key 均不会跨 Task 冲突；
-- [ ] Composer、Sidebar 和 recent-context 通过前向兼容契约测试，且 M5 不显示伪历史/伪 follow-up；
-- [ ] 键盘、focus、live region、AA 对比度目标、reduced motion 和窄屏通过；
-- [ ] 后端 pytest/Ruff、前端 Vitest/typecheck/build、browser smoke 全部通过；
-- [ ] 经用户授权后，M4 真实模型 Demo 重新连续 3/3；
-- [ ] 报告、截图、日志和仓库不包含 API Key。
+- [x] 已有经过检查的桌面/窄屏视觉目标，不以 ASCII 图替代；
+- [x] 页面是 Sidebar + ConversationThread + 单个 TaskRunSection + Composer；
+- [x] 用户 Prompt、非空 Agent Message、Recovery 和失败终态清楚；
+- [x] 六工具默认使用确定性自然语言；
+- [x] 同一 `call_id` 只有一个主 Activity，File/Command 是附件；
+- [x] Diff、stdout/stderr、timeout、cleanup 和两类 truncated 均不误导；
+- [x] Summary Facts 来自完整 Trace，模型 Narrative 不覆盖事实；
+- [x] completed 和 failed（含 shutdown）均有 terminal Summary；
+- [x] 刷新、410、404、204 和终态查询保持 M3 语义；
+- [x] 新任务文案不暗示多轮上下文或取消能力；
+- [x] `buildTaskRun` 可被多 Task 组合复用，Task/Event/Tool key 均不会跨 Task 冲突；
+- [x] Composer、Sidebar 和 recent-context 通过前向兼容契约测试，且 M5 不显示伪历史/伪 follow-up；
+- [x] 键盘、focus、live region、AA 对比度目标、reduced motion 和窄屏通过；
+- [x] 后端 pytest/Ruff、前端 Vitest/typecheck/build、browser smoke 全部通过；
+- [x] 经用户授权后，M4 真实模型 Demo 重新连续 3/3；
+- [x] 报告、截图、日志和仓库不包含 API Key。
 
 ## 15. 风险与止损
 

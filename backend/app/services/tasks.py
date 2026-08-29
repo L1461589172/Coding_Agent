@@ -3,6 +3,7 @@ import asyncio
 from app.agent.runtime import AgentRuntimeError, RuntimeNotReady, TaskRunner
 from app.core.events import EventLimits, EventLog
 from app.models.task import Task, TaskError, TaskStatus, utc_now
+from app.services.trace import ExecutionTrace, TraceRecorder, build_task_summary
 
 
 class TaskBusy(Exception):
@@ -29,6 +30,7 @@ class TaskManager:
         self.event_limits = event_limits or EventLimits()
         self.tasks: dict[str, Task] = {}
         self.logs: dict[str, EventLog] = {}
+        self.traces: dict[str, ExecutionTrace] = {}
         self._active: str | None = None
         self._job: asyncio.Task[None] | None = None
 
@@ -41,6 +43,7 @@ class TaskManager:
         task = Task(prompt=prompt, mode=self.mode)
         self.tasks[task.id] = task
         self.logs[task.id] = EventLog(self.event_limits)
+        self.traces[task.id] = ExecutionTrace()
         self._active = task.id
         self._job = asyncio.create_task(self._execute(task))
         return task.model_copy(deep=True)
@@ -50,11 +53,12 @@ class TaskManager:
 
     async def _execute(self, task: Task) -> None:
         log = self.logs[task.id]
+        recorder = TraceRecorder(log, self.traces[task.id])
         try:
             task.status = TaskStatus.RUNNING
             task.started_at = utc_now()
-            await log.publish(task.id, "task_started", {"mode": task.mode})
-            task.result = await self.runner.run(task.model_copy(deep=True), log)
+            await recorder.publish(task.id, "task_started", {"mode": task.mode})
+            task.result = await self.runner.run(task.model_copy(deep=True), recorder)
             task.status = TaskStatus.COMPLETED
         except RuntimeNotReady:
             task.status = TaskStatus.FAILED
@@ -78,6 +82,7 @@ class TaskManager:
             )
         finally:
             task.finished_at = utc_now()
+            task.summary = build_task_summary(task, self.traces[task.id])
             try:
                 if task.status == TaskStatus.COMPLETED:
                     await log.publish(task.id, "task_completed", {"result": task.result})
@@ -103,6 +108,7 @@ class TaskManager:
             task.status = TaskStatus.FAILED
             task.finished_at = utc_now()
             task.error = TaskError(code="SERVER_SHUTDOWN", message="Service is shutting down")
+            task.summary = build_task_summary(task, self.traces[task.id])
             await self.logs[task.id].publish(
                 task.id, "task_failed", {"error": task.error.model_dump()}
             )

@@ -5,6 +5,36 @@ export interface TaskError {
   message: string
 }
 
+export interface CommandSummary {
+  command: string
+  ok: boolean
+  exit_code: number | null
+  timed_out: boolean
+  cleanup_ok: boolean
+  duration_ms: number | null
+  error_code: string | null
+}
+
+export interface VerificationSummary {
+  kind: 'pytest'
+  command: string
+  passed: boolean
+  exit_code: number | null
+  output_excerpt: string | null
+  output_truncated: boolean
+}
+
+export interface TaskSummary {
+  files_read: string[]
+  files_changed: string[]
+  commands: CommandSummary[]
+  verification: VerificationSummary | null
+  tool_calls: number
+  decision_steps: number
+  error_codes: string[]
+  duration_ms: number | null
+}
+
 export interface Task {
   id: string
   prompt: string
@@ -15,6 +45,7 @@ export interface Task {
   finished_at: string | null
   result: string | null
   error: TaskError | null
+  summary: TaskSummary | null
 }
 
 export interface ToolResultPayload {
@@ -176,6 +207,48 @@ function isTaskError(value: unknown): value is TaskError {
   return isRecord(value) && isString(value.code) && isString(value.message)
 }
 
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(isString)
+}
+
+function isCommandSummary(value: unknown): value is CommandSummary {
+  return isRecord(value)
+    && isString(value.command)
+    && isBoolean(value.ok)
+    && isNullableNumber(value.exit_code)
+    && isBoolean(value.timed_out)
+    && isBoolean(value.cleanup_ok)
+    && isNullableNumber(value.duration_ms)
+    && isNullableString(value.error_code)
+}
+
+function isVerificationSummary(value: unknown): value is VerificationSummary {
+  return isRecord(value)
+    && value.kind === 'pytest'
+    && isString(value.command)
+    && isBoolean(value.passed)
+    && isNullableNumber(value.exit_code)
+    && isNullableString(value.output_excerpt)
+    && isBoolean(value.output_truncated)
+}
+
+function isTaskSummary(value: unknown): value is TaskSummary {
+  return isRecord(value)
+    && isStringArray(value.files_read)
+    && isStringArray(value.files_changed)
+    && Array.isArray(value.commands)
+    && value.commands.every(isCommandSummary)
+    && (value.verification === null || isVerificationSummary(value.verification))
+    && isNumber(value.tool_calls)
+    && Number.isInteger(value.tool_calls)
+    && value.tool_calls >= 0
+    && isNumber(value.decision_steps)
+    && Number.isInteger(value.decision_steps)
+    && value.decision_steps >= 0
+    && isStringArray(value.error_codes)
+    && isNullableNumber(value.duration_ms)
+}
+
 function isToolResult(value: unknown): value is ToolResultPayload {
   return isRecord(value)
     && isBoolean(value.ok)
@@ -196,7 +269,8 @@ export function parseTask(value: unknown): Task {
     || !isNullableString(value.started_at)
     || !isNullableString(value.finished_at)
     || !isNullableString(value.result)
-    || !(value.error === null || isTaskError(value.error))) {
+    || !(value.error === null || isTaskError(value.error))
+    || !(value.summary === null || isTaskSummary(value.summary))) {
     throw new Error('后端返回了无效的任务数据')
   }
   return value as unknown as Task

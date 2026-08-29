@@ -65,3 +65,9 @@
 ```
 
 联网调用会产生真实模型费用。退出码只有在全部轮次同时满足基线失败、实现修改、测试未篡改、Agent pytest 成功、独立 pytest 成功和终态一致时才为 0。
+
+## 7. M5 后重新验收（2026-08-29）
+
+M5 收口后重新连续运行 3 轮，结果仍为 3/3，耗时分别为 12.000、12.969、11.750 秒，平均 12.240 秒；每轮均为 5 个决策步、6 次成功工具调用，Agent pytest 与独立 pytest 都是 2 passed。
+
+验收器同时新增 M5 硬检查：terminal Summary 必须存在、`files_changed` 必须包含 `calculator.py`、最后一次 pytest Verification 必须为 passed。三轮全部通过，测试文件哈希均未变化，报告保存于 Git 忽略的 `output/m5-real-demo.json`。

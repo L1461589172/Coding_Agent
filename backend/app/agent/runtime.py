@@ -6,7 +6,7 @@ from typing import Any, Protocol
 from app.agent.context import ContextBudget, ContextBudgetError, Conversation
 from app.agent.llm import LLMClient, LLMError, ModelReply, ToolCall
 from app.agent.stop import StopController
-from app.core.events import EventLog
+from app.core.events import EventPublisher
 from app.models.task import Task
 from app.tools.base import ToolResult
 from app.tools.registry import ToolRegistry
@@ -37,7 +37,7 @@ class AgentRuntimeError(Exception):
 
 
 class TaskRunner(Protocol):
-    async def run(self, task: Task, events: EventLog) -> str: ...
+    async def run(self, task: Task, events: EventPublisher) -> str: ...
 
 
 class AgentRuntime:
@@ -83,7 +83,7 @@ class AgentRuntime:
         if self.llm is not None:
             await self.llm.close()
 
-    async def run(self, task: Task, events: EventLog) -> str:
+    async def run(self, task: Task, events: EventPublisher) -> str:
         if self.llm is None:
             await events.publish(
                 task.id,
@@ -189,7 +189,7 @@ class AgentRuntime:
     async def _execute_tool(
         self,
         task: Task,
-        events: EventLog,
+        events: EventPublisher,
         call: ToolCall,
         decision: str,
         step: int,
@@ -270,7 +270,7 @@ class AgentRuntime:
     @staticmethod
     async def _publish_specialized_event(
         task: Task,
-        events: EventLog,
+        events: EventPublisher,
         call: ToolCall,
         result: ToolResult,
         step: int,

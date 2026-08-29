@@ -7,11 +7,8 @@ from fastapi.testclient import TestClient
 
 
 def decode_sse(response) -> list[dict]:
-    return [
-        json.loads(line[6:])
-        for line in response.text.splitlines()
-        if line.startswith("data: ")
-    ]
+    lines = response.text.splitlines()
+    return [json.loads(line[6:]) for line in lines if line.startswith("data: ")]
 
 
 class SuccessfulRunner:
@@ -135,9 +132,7 @@ def test_large_specialized_payloads_are_bounded_and_terminal_event_is_retained(t
         ]
         for event in events[2:5]:
             assert event["payload"]["payload_truncated"] is True
-            payload_text = json.dumps(
-                event["payload"], ensure_ascii=False, separators=(",", ":")
-            )
+            payload_text = json.dumps(event["payload"], ensure_ascii=False, separators=(",", ":"))
             assert len(payload_text) <= 512
         assert events[-1]["payload"] == {"result": "large payload handled"}
         assert client.get(f"/api/tasks/{task['id']}").json()["status"] == "COMPLETED"
