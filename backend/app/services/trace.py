@@ -1,4 +1,6 @@
 import shlex
+from collections.abc import Awaitable, Callable
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -150,9 +152,15 @@ class ExecutionTrace:
 
 
 class TraceRecorder:
-    def __init__(self, events: EventLog, trace: ExecutionTrace) -> None:
+    def __init__(
+        self,
+        events: EventLog,
+        trace: ExecutionTrace,
+        commit: Callable[[AgentEvent, ExecutionTrace], Awaitable[None]] | None = None,
+    ) -> None:
         self.events = events
         self.trace = trace
+        self.commit = commit
 
     async def publish(
         self,
@@ -161,8 +169,27 @@ class TraceRecorder:
         payload: dict[str, Any],
         step: int = 0,
     ) -> AgentEvent:
-        event = await self.events.publish(task_id, kind, payload, step)
-        self.trace.observe(kind, payload)
+        next_trace = deepcopy(self.trace)
+        next_trace.observe(kind, payload)
+
+        async def before_notify(event: AgentEvent) -> None:
+            if self.commit is not None:
+                await self.commit(event, next_trace)
+
+        event = await self.events.publish(
+            task_id,
+            kind,
+            payload,
+            step,
+            before_notify=before_notify if self.commit is not None else None,
+        )
+        self.trace.files_read = next_trace.files_read
+        self.trace.files_changed = next_trace.files_changed
+        self.trace.commands = next_trace.commands
+        self.trace.error_codes = next_trace.error_codes
+        self.trace.tool_calls = next_trace.tool_calls
+        self.trace.decision_steps = next_trace.decision_steps
+        self.trace._tool_call_ids = next_trace._tool_call_ids
         return event
 
 

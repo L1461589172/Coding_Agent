@@ -230,8 +230,8 @@ def test_step_limit_is_a_structured_task_failure(tmp_path):
 
     async def scenario():
         manager = TaskManager(runtime, mode="agent")
-        task = manager.create("Never finish")
-        chunks = [chunk async for chunk in manager.logs[task.id].stream()]
+        task = await manager.create("Never finish")
+        chunks = [chunk async for chunk in manager.get_log(task.id).stream()]
         finished = manager.get(task.id)
         assert finished.mode == "agent"
         assert finished.error.code == "AGENT_STEP_LIMIT"
@@ -242,7 +242,7 @@ def test_step_limit_is_a_structured_task_failure(tmp_path):
     asyncio.run(scenario())
 
 
-def test_configured_app_uses_agent_runtime_and_closes_model(tmp_path, monkeypatch):
+def test_configured_app_uses_agent_runtime_and_closes_model(tmp_path, history_dir, monkeypatch):
     fake = FakeLLM([ModelReply(content="Configured runtime completed.")])
     monkeypatch.setattr(
         OpenAICompatibleLLMClient,
@@ -252,6 +252,7 @@ def test_configured_app_uses_agent_runtime_and_closes_model(tmp_path, monkeypatc
     app = create_app(
         Settings(
             workspace=tmp_path,
+            history_dir=history_dir,
             api_key="fixture-key",
             base_url="https://model.example/v1",
             model="fixture-model",

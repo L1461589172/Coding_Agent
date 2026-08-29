@@ -111,8 +111,8 @@ def test_summary_uses_complete_trace_after_event_payload_and_history_eviction():
                 max_history_events=3,
             ),
         )
-        created = manager.create("summarize")
-        _ = [chunk async for chunk in manager.logs[created.id].stream()]
+        created = await manager.create("summarize")
+        _ = [chunk async for chunk in manager.get_log(created.id).stream()]
         task = manager.get(created.id)
         assert task.summary is not None
         assert task.summary.files_read == ["src/example.py"]
@@ -123,7 +123,7 @@ def test_summary_uses_complete_trace_after_event_payload_and_history_eviction():
         assert task.summary.verification.passed is True
         assert task.summary.verification.command == "python -m pytest tests/test_example.py"
         assert task.summary.duration_ms is not None
-        assert manager.logs[created.id].first_id > 1
+        assert manager.get_log(created.id).first_id > 1
         await manager.close()
 
     asyncio.run(scenario())
@@ -151,8 +151,8 @@ def test_last_recognized_pytest_command_and_failure_code_win():
 
     async def scenario():
         manager = TaskManager(Runner(), mode="agent")
-        created = manager.create("fail after verification")
-        _ = [chunk async for chunk in manager.logs[created.id].stream()]
+        created = await manager.create("fail after verification")
+        _ = [chunk async for chunk in manager.get_log(created.id).stream()]
         task = manager.get(created.id)
         assert task.summary is not None
         assert task.summary.verification is not None
@@ -192,7 +192,7 @@ def test_immediate_shutdown_has_terminal_partial_summary():
 
     async def scenario():
         manager = TaskManager(UnusedRunner())
-        created = manager.create("pending")
+        created = await manager.create("pending")
         await manager.close()
         task = manager.get(created.id)
         assert task.summary is not None
@@ -202,7 +202,9 @@ def test_immediate_shutdown_has_terminal_partial_summary():
     asyncio.run(scenario())
 
 
-def test_task_api_summary_is_null_before_terminal_and_complete_after_terminal(tmp_path):
+def test_task_api_summary_is_null_before_terminal_and_complete_after_terminal(
+    tmp_path, history_dir
+):
     class Runner:
         async def run(self, task, events):
             await events.publish(
@@ -217,7 +219,13 @@ def test_task_api_summary_is_null_before_terminal_and_complete_after_terminal(tm
             )
             return "done"
 
-    app = create_app(Settings(workspace=tmp_path), runner=Runner())
+    app = create_app(
+        Settings(
+            workspace=tmp_path,
+            history_dir=history_dir,
+        ),
+        runner=Runner(),
+    )
     with TestClient(app, base_url="http://127.0.0.1:8000") as client:
         created = client.post("/api/tasks", json={"prompt": "finish"}).json()
         assert created["summary"] is None

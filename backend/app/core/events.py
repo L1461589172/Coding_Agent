@@ -1,6 +1,6 @@
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -27,10 +27,16 @@ class EventLimits:
     def __post_init__(self) -> None:
         if self.max_payload_characters < 256:
             raise ValueError("max_payload_characters must be at least 256")
+        if self.max_payload_characters > 12_000:
+            raise ValueError("max_payload_characters cannot exceed format v1")
         if self.max_history_characters < self.max_payload_characters + 1_024:
             raise ValueError("max_history_characters must cover one payload and its event envelope")
+        if self.max_history_characters > 256_000:
+            raise ValueError("max_history_characters cannot exceed format v1")
         if self.max_history_events < 1:
             raise ValueError("max_history_events must be positive")
+        if self.max_history_events > 512:
+            raise ValueError("max_history_events cannot exceed format v1")
 
 
 def _serialized_characters(value: Any) -> int:
@@ -115,19 +121,27 @@ class EventLog:
         return cursor == 0 or cursor >= self.first_id - 1
 
     async def publish(
-        self, task_id: str, kind: EventType, payload: dict[str, Any], step: int = 0
+        self,
+        task_id: str,
+        kind: EventType,
+        payload: dict[str, Any],
+        step: int = 0,
+        *,
+        before_notify: Callable[[AgentEvent], Awaitable[None]] | None = None,
     ) -> AgentEvent:
         async with self._changed:
             if self.closed:
                 raise RuntimeError("Cannot append events after task termination")
-            self._last_id += 1
             event = AgentEvent(
-                id=str(self._last_id),
+                id=str(self._last_id + 1),
                 task_id=task_id,
                 type=kind,
                 payload=_bounded_payload(payload, self.limits.max_payload_characters),
                 step=step,
             )
+            if before_notify is not None:
+                await before_notify(event)
+            self._last_id += 1
             self._events.append(event)
             characters = len(event.as_sse())
             self._event_characters.append(characters)
@@ -141,6 +155,27 @@ class EventLog:
             self.closed = kind in TERMINAL_EVENTS
             self._changed.notify_all()
             return event
+
+    @classmethod
+    def from_persisted(
+        cls,
+        events: Sequence[AgentEvent],
+        last_id: int,
+        limits: EventLimits | None = None,
+    ) -> "EventLog":
+        log = cls(limits)
+        log._events = [event.model_copy(deep=True) for event in events]
+        log._event_characters = [len(event.as_sse()) for event in log._events]
+        log._history_characters = sum(log._event_characters)
+        log._last_id = last_id
+        while len(log._events) > 1 and (
+            len(log._events) > log.limits.max_history_events
+            or log._history_characters > log.limits.max_history_characters
+        ):
+            log._events.pop(0)
+            log._history_characters -= log._event_characters.pop(0)
+        log.closed = bool(log._events and log._events[-1].type in TERMINAL_EVENTS)
+        return log
 
     async def stream(self, after: int = 0, heartbeat: float = 15) -> AsyncIterator[str]:
         cursor = after

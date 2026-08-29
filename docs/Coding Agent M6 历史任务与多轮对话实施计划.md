@@ -8,6 +8,10 @@
 >
 > 核心目标：历史任务在服务重启后仍可浏览；一次 follow-up 创建新的 Task 并归入同一 Session；模型只接收有界、完整、可解释的历史回合摘要，不复用旧 Task 的工具调用状态。
 
+> 2026-08-29 实施状态：Phase 0–2 已完成并通过后端全量 `276 passed, 1 warning` 与定向 `96 passed, 1 warning`；Phase 3–7 尚未实现。当前旧 `POST /api/tasks` 会在内部创建新 Session，但 Task DTO 的 `session_id`/`ordinal`、Session API、follow-up、历史上下文、UI、删除/保留和真实多轮验收仍按后续 Phase 推进。
+
+当前 format v1 冻结上限为 200 Session、每 Session 100 Task、单 Task 512 个/256000 字符的受限事件、单事件 payload 12000 字符、单 JSON 读取 2 MiB；TaskRecap 契约的 prompt/result 上限分别为 4000/8000 字符。单次启动最多自动隔离 10 个损坏 Task，超过后停止启动并保留 quarantine 现场，避免把大面积损坏误报为空历史。
+
 ## 0. 决策摘要
 
 M6 采用“Session 包含多个 TaskRun”的模型，而不是把一个长时间运行的 Task 改造成聊天会话：
@@ -573,7 +577,7 @@ Prompt、result、文件名和命令摘要可能包含项目敏感信息。历�
 
 ## 12. 实施阶段
 
-### Phase 0：契约、威胁模型与迁移演练
+### Phase 0：契约、威胁模型与迁移演练（已完成）
 
 - 冻结 Session/TaskRecap/API/JSON format/上限；
 - 确认默认 `.coding-agent/history`、工具路径阻止和 Workspace fingerprint；
@@ -581,7 +585,7 @@ Prompt、result、文件名和命令摘要可能包含项目敏感信息。历�
 - 先建立 repository contract、format migration、atomic replace 和 restart fixtures；
 - 确认 M5 兼容点已经落地，若未落地只补接口，不并行重写 UI。
 
-### Phase 1：JSON HistoryRepository
+### Phase 1：JSON HistoryRepository（已完成）
 
 - `.coding-agent` 目录、Git ignore、Workspace.BLOCKED 和跨进程 history.lock；
 - CURRENT、format.json、Workspace/Session/Task JSON 与可重建 index；
@@ -589,7 +593,7 @@ Prompt、result、文件名和命令摘要可能包含项目敏感信息。历�
 - temporary JSON repository 与 in-memory repository 契约测试；
 - 文件锁释放、临时文件清理、格式迁移/回退失败测试。
 
-### Phase 2：持久 Task/Event 生命周期
+### Phase 2：持久 Task/Event 生命周期（已完成）
 
 - TaskManager 改为 repository 事实源 + active runtime state；
 - create/running/event/terminal 的提交顺序；

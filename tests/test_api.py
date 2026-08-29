@@ -89,7 +89,7 @@ def test_origin_and_host_guards(client):
     assert allowed.headers["access-control-allow-origin"] == "http://localhost:5173"
 
 
-def test_active_task_conflict_and_shutdown(tmp_path):
+def test_active_task_conflict_and_shutdown(tmp_path, history_dir):
     started = threading.Event()
     stopped = threading.Event()
 
@@ -101,7 +101,13 @@ def test_active_task_conflict_and_shutdown(tmp_path):
             finally:
                 stopped.set()
 
-    app = create_app(Settings(workspace=tmp_path), runner=WaitingRunner())
+    app = create_app(
+        Settings(
+            workspace=tmp_path,
+            history_dir=history_dir,
+        ),
+        runner=WaitingRunner(),
+    )
     with TestClient(app, base_url="http://127.0.0.1:8000") as client:
         task = client.post("/api/tasks", json={"prompt": "wait"}).json()
         assert started.wait(timeout=2)
@@ -110,15 +116,22 @@ def test_active_task_conflict_and_shutdown(tmp_path):
     assert app.state.tasks.get(task["id"]).error.code == "SERVER_SHUTDOWN"
 
 
-def test_unexpected_errors_are_not_exposed(tmp_path):
+def test_unexpected_errors_are_not_exposed(tmp_path, history_dir):
     class BrokenRunner:
         async def run(self, task, events):
             raise RuntimeError("fixture-secret-must-not-leak")
 
-    app = create_app(Settings(workspace=tmp_path, max_tasks=1), runner=BrokenRunner())
+    app = create_app(
+        Settings(
+            workspace=tmp_path,
+            max_tasks=1,
+            history_dir=history_dir,
+        ),
+        runner=BrokenRunner(),
+    )
     with TestClient(app, base_url="http://127.0.0.1:8000") as client:
         task = client.post("/api/tasks", json={"prompt": "x"}).json()
         result = client.get(f"/api/tasks/{task['id']}/events")
         assert "RUNTIME_ERROR" in result.text
         assert "fixture-secret" not in result.text
-        assert client.post("/api/tasks", json={"prompt": "next"}).status_code == 503
+        assert client.post("/api/tasks", json={"prompt": "next"}).status_code == 202

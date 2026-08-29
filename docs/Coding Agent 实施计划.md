@@ -3,7 +3,7 @@
 > 计划周期：2026-08-27 至 2026-09-07（因新增 M6 持久化与多轮会话，建议重新基线）
 > 交付目标：先完成可重复的端到端 Agent 闭环，再补展示与提交材料。任何 P1 功能不得阻塞 P0。
 
-> 2026-08-29 更新：M0 至 M5 已实现；M6 为历史任务持久化与多轮会话；最终交付为 M7。详见 [当前状态](README.md)、[M5 完成说明](Coding%20Agent%20M5%20UX%20重构完成说明.md) 与 [M6 计划](Coding%20Agent%20M6%20历史任务与多轮对话实施计划.md)。
+> 2026-08-29 更新：M0 至 M5 已实现；M6 Phase 0–2 已实现，Phase 3–7 待继续；最终交付为 M7。详见 [当前状态](README.md)、[M5 完成说明](Coding%20Agent%20M5%20UX%20重构完成说明.md) 与 [M6 计划](Coding%20Agent%20M6%20历史任务与多轮对话实施计划.md)。
 
 ## 1. 里程碑
 
@@ -15,7 +15,7 @@
 | 08-30 | API 与前端时间线 | 完整真实执行事件 | M3 已实现并通过确定性 API/UI 契约验证 |
 | 08-31 | Demo 打通 | 真实模型连续成功至少 3 次 | 已实现；正式验收连续 3/3 成功 |
 | 08-29–09-01 | 可组合 TaskRun UX | 自然语言活动、完整 Trace/Summary、恢复与无障碍不回退；为多 Task 组合保留接口 | 已实现并重新取得 M4 真实模型 3/3；详见 M5 完成说明 |
-| 09-02–09-06 | 历史任务与多轮会话 | 项目内版本化 JSON 持久化、原子写/锁、重启收敛、Session/follow-up API、有界历史上下文与历史 UI | 计划已制定；详见 M6 实施计划 |
+| 09-02–09-06 | 历史任务与多轮会话 | 项目内版本化 JSON 持久化、原子写/锁、重启收敛、Session/follow-up API、有界历史上下文与历史 UI | Phase 0–2 已实现；Phase 3–7 待继续 |
 | 09-07 | 最终交付 | 全量复验、README.txt、视频、密钥扫描、材料检查和最终提交 | M7 待实施，不推断远程仓库状态 |
 
 ## 2. 工作分解
@@ -43,7 +43,7 @@
 
 退出标准：不经过模型，工具层测试全部通过；任何文件写入都能给出可审计结果。
 
-历史记录为 172 passed，随后复验发现 D001（171 passed / 1 failed）。M1 修复阶段达到 194 passed，M2 达到 242，M3 达到 246，M4 达到 248；M5 当前全量为 254 passed，并有新的三轮真实模型验收。POSIX 分支仍待实机验收。
+历史记录为 172 passed，随后复验发现 D001（171 passed / 1 failed）。M1 修复阶段达到 194 passed，M2 达到 242，M3 达到 246，M4 达到 248，M5 达到 254；M6 Phase 0–2 当前全量为 276 passed。M5 的三轮真实模型验收仍有效，但本轮未重新执行；POSIX 分支仍待实机验收。
 
 ### M2：Agent Runtime（08-29）
 
@@ -97,10 +97,10 @@
 
 ### M6：历史任务与多轮对话（09-02 至 09-06）
 
-- [ ] 在项目 `/.coding-agent/history/` 建立版本化 JSON Repository、跨进程单写锁、原子替换、格式迁移和资源关闭边界；目录受 Git ignore 与 Workspace.BLOCKED 双重保护。
-- [ ] 持久化 Session、Task、TaskSummary 和受既有上限约束的 Events；Repository 取代内存历史事实源。
+- [x] 在项目 `/.coding-agent/history/` 建立版本化 JSON Repository、跨进程单写锁、原子替换、格式迁移和资源关闭边界；目录受 Git ignore 与 Workspace.BLOCKED 双重保护。
+- [x] 持久化 Session、Task、TaskSummary 和受既有上限约束的 Events；Repository 取代内存历史事实源。
 - [ ] 保持 `POST /api/tasks` 向后兼容，并新增 Session 列表/详情/Task 分页/follow-up/删除 API。
-- [ ] 实现 persist-before-SSE、terminal 原子收口、重启后 durable replay 与 PENDING/RUNNING → `SERVER_RESTARTED` 幂等收敛。
+- [x] 实现 persist-before-SSE、terminal 原子收口、重启后 durable replay 与 PENDING/RUNNING → `SERVER_RESTARTED` 幂等收敛。
 - [ ] 从历史 Task/TaskSummary 确定性构建 TaskRecap；复用 M2 字符/token 总预算，按最近完整回合选择，不重放旧工具输出。
 - [ ] 接入 M5 ConversationThread/TaskRunSection：历史 Sidebar、多 TaskRun、New Conversation、Follow-up、URL/recent-context 恢复。
 - [ ] 保持全局单活动 Task；浏览旧会话时 active SSE watcher 继续工作，follow-up 使用新的 Conversation/StopController/call_id 生命周期。
@@ -129,7 +129,7 @@ M7 不实现 M6 功能。若 JSON format/migration、原子写/锁、重启收�
 
 | 层级 | 方法 | 必测内容 |
 |---|---|---|
-| 单元/工具集成 | pytest | Workspace、工具、LLM HTTP、上下文、事件、Agent Loop、M3 恢复、M4 Demo、M5 Trace/Summary；当前基线为 254 项，M6 Repository/migration/context 测试尚待新增 |
+| 单元/工具集成 | pytest | Workspace、工具、LLM HTTP、上下文、事件、Agent Loop、M3 恢复、M4 Demo、M5 Trace/Summary、M6 Repository/migration/restart；当前基线为 276 项，M6 context/API/UI 测试随 Phase 3–5 新增 |
 | 无模型工具流程 | tests/test_shell_tools.py / test_command_bytecode.py | 真实写入、pytest 失败、替换与复验；固定时间戳旧缓存及重复执行验证 |
 | 组件 | Fake LLM | 调用 ID 回填、参数错误恢复、并行调用、预算裁剪、步数/重复停止和真实本地修复流程 |
 | API | FastAPI TestClient | 任务冲突、Session/follow-up/delete、游标分页、事件持久回放、服务重启与终态一致性 |

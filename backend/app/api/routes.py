@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
 
 from app.models.task import Task, TaskCreate
-from app.services.tasks import TaskBusy, TaskCapacity, TaskManager
+from app.services.tasks import TaskBusy, TaskCapacity, TaskManager, TaskPersistenceUnavailable
 
 router = APIRouter(prefix="/api")
 
@@ -26,11 +26,13 @@ async def metadata(request: Request) -> dict:
 @router.post("/tasks", status_code=202, response_model=Task)
 async def create_task(body: TaskCreate, request: Request) -> Task:
     try:
-        return manager(request).create(body.prompt)
+        return await manager(request).create(body.prompt)
     except TaskBusy as exc:
         raise HTTPException(409, "A task is already running") from exc
     except TaskCapacity as exc:
-        raise HTTPException(503, "In-memory task limit reached; restart the service") from exc
+        raise HTTPException(503, "History capacity has been reached") from exc
+    except TaskPersistenceUnavailable as exc:
+        raise HTTPException(503, "Task history is temporarily unavailable") from exc
 
 
 @router.get("/tasks/{task_id}", response_model=Task)
@@ -44,7 +46,7 @@ async def get_task(task_id: str, request: Request) -> Task:
 @router.get("/tasks/{task_id}/events")
 async def task_events(task_id: str, request: Request, after: int = 0) -> Response:
     await get_task(task_id, request)
-    log = manager(request).logs[task_id]
+    log = manager(request).get_log(task_id)
     try:
         cursor = int(request.headers.get("last-event-id", str(after)))
     except ValueError as exc:

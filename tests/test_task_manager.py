@@ -10,10 +10,10 @@ def test_immediate_shutdown_closes_pending_task():
 
     async def scenario():
         manager = TaskManager(UnusedRunner())
-        task = manager.create("pending")
+        task = await manager.create("pending")
         await manager.close()
         assert manager.get(task.id).error.code == "SERVER_SHUTDOWN"
-        assert manager.logs[task.id].closed
+        assert manager.get_log(task.id).closed
 
     asyncio.run(scenario())
 
@@ -25,8 +25,8 @@ def test_success_branch_uses_injected_test_runner():
 
     async def scenario():
         manager = TaskManager(TestRunner())
-        task = manager.create("unit test")
-        chunks = [chunk async for chunk in manager.logs[task.id].stream()]
+        task = await manager.create("unit test")
+        chunks = [chunk async for chunk in manager.get_log(task.id).stream()]
         assert manager.get(task.id).status == "COMPLETED"
         assert "task_completed" in chunks[-1]
         await manager.close()

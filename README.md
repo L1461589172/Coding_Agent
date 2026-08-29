@@ -2,7 +2,7 @@
 
 本地自主编程智能体：Vue 3 + TypeScript + FastAPI，自研 Agent Loop，不使用 Agent 框架/SDK 或托管代码执行工具。
 
-> M1–M5 已完成：六工具与 Agent Runtime 可闭环执行，M5 页面以可组合 TaskRun 展示聚合活动、真实附件与终态 Summary；固定 Bug Demo 在 M5 后重新连续 3/3 成功。
+> M1–M5 已完成；M6 Phase 0–2 已完成版本化 JSON 历史仓储、持久 Task/Event 生命周期与重启收敛。Session/follow-up API、多轮上下文和历史 UI 仍在后续 Phase 3–5。
 
 ## 环境要求
 
@@ -99,9 +99,21 @@ Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health'
 
 ### 6. 停止与再次启动
 
-两个服务分别在对应终端按 `Ctrl+C` 退出。停止后端会清空内存任务历史；当前没有用户任务取消 API。
+两个服务分别在对应终端按 `Ctrl+C` 退出。后端会先把活动任务收敛为 `SERVER_SHUTDOWN`，再释放历史文件锁和模型客户端；已提交的任务、Summary 与有界事件不会因正常重启丢失。当前没有用户任务取消 API。
 
 下次只需分别执行第 3、4 步。后端没有启用代码热重载，修改 Python 代码后需重启；前端开发模式由 Vite 更新页面。
+
+### 本地历史存储（M6 Phase 0–2）
+
+默认历史位于仓库根目录 `/.coding-agent/history/`，按 Workspace 规范化绝对路径的 SHA-256 fingerprint 隔离，并被 Git ignore 与六工具路径守卫同时阻止。历史使用版本化 JSON，而不是数据库；Task JSON 是 Task、Trace、Summary 与已裁剪事件的事实源，Session/index 是可重建投影。
+
+- 新任务在返回 202 前落盘；事件和终态在 SSE 可见前原子提交。
+- 正常重启后，现有 GET Task 和 SSE replay 仍可读取终态任务；意外中断留下的 PENDING/RUNNING 任务在下次启动时只收敛一次为 `SERVER_RESTARTED`，不会重放模型或工具调用。
+- 同一历史目录只允许一个后端写入；格式高于当前程序、关键格式损坏或目录链接越界会拒绝启动，不会静默退回内存历史。
+- 损坏的 index/session 投影会保留到 `quarantine/` 后重建；单个损坏 Task 会被隔离并把仍可恢复的 Session 标记为不完整。
+- JSON 会保存用户 Prompt 和模型结果。不要在任务正文中提交密码、API Key 或其他秘密，也不要把 `.coding-agent` 目录同步或提交到版本库。
+
+当前前端尚未提供 Session 历史列表、follow-up 或删除入口；这些属于 M6 Phase 3–5。不要手工编辑正在被服务使用的历史目录。
 
 ## 环境变量配置
 
@@ -125,9 +137,16 @@ Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health'
 | `CODING_AGENT_CONTEXT_MAX_TOKENS` | `20000` | 后端：消息与工具 Schema 的估算 token 总预算 | 已接入 Conversation |
 | `CODING_AGENT_TOOL_RESULT_MAX_CHARACTERS` | `12000` | 后端：单个模型侧 ToolResult 上限，至少 256 | 不改变工具自身输出上限 |
 | `CODING_AGENT_CONTEXT_RECENT_ROUNDS` | `8` | 后端：最多保留的最近完整轮次 | 已接入 Conversation |
-| `CODING_AGENT_EVENT_MAX_PAYLOAD_CHARACTERS` | `12000` | 后端：单事件 payload 字符上限，至少 256 | 超限转换为带元数据的预览信封 |
-| `CODING_AGENT_EVENT_MAX_HISTORY_CHARACTERS` | `256000` | 后端：每任务 SSE 历史字符上限，至少覆盖单 payload 加 1024 字符信封 | 超限淘汰最旧事件 |
-| `CODING_AGENT_EVENT_MAX_HISTORY_EVENTS` | `512` | 后端：每任务最多保留事件数，必须为正整数 | 事件 ID 始终单调递增 |
+| `CODING_AGENT_EVENT_MAX_PAYLOAD_CHARACTERS` | `12000` | 后端：单事件 payload 字符上限，format v1 范围 256–12000 | 超限转换为带元数据的预览信封 |
+| `CODING_AGENT_EVENT_MAX_HISTORY_CHARACTERS` | `256000` | 后端：每任务 SSE 历史字符上限，不超过 format v1 的 256000 | 至少覆盖单 payload 加 1024；超限淘汰最旧事件 |
+| `CODING_AGENT_EVENT_MAX_HISTORY_EVENTS` | `512` | 后端：每任务最多保留事件数，format v1 范围 1–512 | 事件 ID 始终单调递增；重启降低配置时不重编号 |
+| `CODING_AGENT_HISTORY_DIR` | `<项目根>/.coding-agent/history` | 后端：高级历史目录覆盖，必须是绝对路径 | 默认目录受项目根边界校验；生产不降级为内存 |
+| `CODING_AGENT_HISTORY_MAX_SESSIONS` | `200` | 后端：format v1 的 Session 硬上限，1–200 | 达到上限时新建任务返回 503 |
+| `CODING_AGENT_HISTORY_MAX_TASKS_PER_SESSION` | `100` | 后端：format v1 的单 Session Task 上限，1–100 | Phase 3 follow-up 将使用；当前新任务均创建新 Session |
+| `CODING_AGENT_HISTORY_BACKUP_LIMIT` | `3` | 后端：格式迁移前备份数量上限 | 已接入 v0→v1 迁移 |
+| `CODING_AGENT_HISTORY_BACKUP_MAX_BYTES` | `67108864` | 后端：迁移备份累计字节上限 | 超限拒绝迁移并保持旧 CURRENT |
+| `CODING_AGENT_HISTORY_MAX_AGE_DAYS` | `90` | 后端：历史保留期配置 | 已冻结配置，Phase 6 才执行清理 |
+| `CODING_AGENT_HISTORY_MAX_BYTES` | `536870912` | 后端：历史总字节配置 | 已冻结配置，Phase 6 才执行硬上限/清理 |
 | `CODING_AGENT_MAX_CONSECUTIVE_LLM_ERRORS` | `3` | 后端：Agent 级连续可恢复模型错误阈值 | 不替代客户端内部 HTTP 重试 |
 | `CODING_AGENT_MAX_CONSECUTIVE_RUNTIME_ERRORS` | `3` | 后端：连续工具基础设施错误阈值 | 达到阈值结构化终止 |
 | `CODING_AGENT_MAX_CONSECUTIVE_COMMAND_TIMEOUTS` | `3` | 后端：连续命令超时阈值 | 达到阈值结构化终止 |
@@ -244,7 +263,7 @@ $pytestRunDir = Join-Path $env:TEMP ("coding-agent-pytest-" + [guid]::NewGuid().
 
 按实际克隆位置调整上述绝对路径。pytest 会清空 `--basetemp`：必须使用新建的专用随机路径，不能指定项目根目录或已有数据目录。脚本不删除旧测试目录；运行记录保留在系统临时目录，便于检查失败样例。
 
-当前在 Windows/Python 3.12 下全量 **254 项确定性测试通过**；前端 Vitest 为 20 passed，严格类型检查与生产构建通过。M5 后真实模型三轮 Demo 为 3/3，且每轮 Summary 的文件变更与 pytest 结论通过独立核对。真实 Demo 会产生供应商费用；详见 [M5 完成说明](docs/Coding%20Agent%20M5%20UX%20重构完成说明.md) 与 [M4 说明](docs/Coding%20Agent%20M4%20Demo%20与可靠性完成说明.md)。保留既有 Starlette/httpx 弃用提示。
+当前在 Windows/Python 3.12 下后端全量 **276 项确定性测试通过**；Ruff lint/format 通过。前端 Vitest 20 passed、严格类型/生产构建以及真实模型三轮 Demo 3/3 是 M5 阶段证据，本轮未重新执行。真实 Demo 会产生供应商费用；详见 [M6 计划与状态](docs/Coding%20Agent%20M6%20历史任务与多轮对话实施计划.md)、[M5 完成说明](docs/Coding%20Agent%20M5%20UX%20重构完成说明.md) 与 [M4 说明](docs/Coding%20Agent%20M4%20Demo%20与可靠性完成说明.md)。保留既有 Starlette/httpx 弃用提示。
 
 三类机制应分开处理：`--basetemp` 隔离 pytest 临时目录及账户权限；`cache_dir` 管理 pytest 状态缓存；Python/pytest 字节码则由 `run_command` 为每次命令设置独立 `PYTHONPYCACHEPREFIX` 并禁写常规字节码。修复不删除工作区已有 `.pyc`，也不要求手动清缓存。该策略只作用于工具命令，不接管用户手动启动的 Python。
 

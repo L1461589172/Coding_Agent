@@ -492,7 +492,7 @@ TaskManager / Runtime -> core/events.py（EventLog）
 | P1：Workspace / 静态托管 | 文件树、Code Viewer、Diff Viewer | 文件查询 API、前端静态产物托管 | 未来扩展 `components/`、`api/routes.py`、`main.py`；新增文件名尚未确定 |
 | M4：已实现 | 展示真实改动、命令结果和终态；三轮 3/3 成功 | Calculator Bug 的 Agent/独立 pytest 双重验收已完成 | `demo_workspace/`、`scripts/run_m4_demo.py`、`tests/test_m4_demo.py` |
 | M5：已实现 | ConversationThread、可组合 TaskRun、确定性活动聚合、File/Command 附件、响应式与无障碍 | 完整有界 Trace、成功/失败 Summary 和 M6 前向兼容接口 | `frontend/src/`、`services/trace.py`、`models/task.py`、`services/tasks.py`；详见 M5 完成说明 |
-| M6：已规划，待实施 | 历史 Sidebar、多 TaskRun Thread、新会话与 follow-up | 项目 `/.coding-agent/history/` 下版本化 JSON Repository、原子替换/锁、重启收敛、有界 TaskRecap、删除与保留 | `backend/app/`、`frontend/src/`；详见 M6 历史任务与多轮对话计划 |
+| M6：Phase 0–2 已实现 | 历史 Sidebar、多 TaskRun Thread、新会话与 follow-up 仍待 Phase 3–5 | 已有项目 `/.coding-agent/history/` 下版本化 JSON Repository、原子替换/锁、严格校验/迁移/隔离、持久 Task/Event 与重启收敛；有界上下文、删除与保留待后续 Phase | `backend/app/history/`、`services/tasks.py`、`core/events.py`；详见 M6 历史任务与多轮对话计划 |
 | M7：最终交付 | 不新增产品功能 | README.txt、视频、密钥扫描和最终提交检查 | 根目录与交付材料；不由 M5/M6 P1 挤占 |
 
 M6 只纳入项目内 JSON 文件形式的本地单用户 Session/Task/Event 持久化和有界多轮 TaskRecap；不引入数据库，多用户、并行任务、向量/自动长期记忆仍不在范围内。后续新增或完成文件时，应同时更新本节“已实现/待实现”列与实施计划，避免仅以存在同名文件判断功能完成。
@@ -554,7 +554,7 @@ M6 只纳入项目内 JSON 文件形式的本地单用户 Session/Task/Event 持
 
 这个范围既满足题目对“编程智能体”的定义，也把时间投入集中在评委会追问的部分：Agent 为什么这样运行、每一步由谁决定、工具如何落地、错误怎样反馈、循环为何会停止。
 
-## 13. 当前实现状态（2026-08-29，M5 已完成）
+## 13. 当前实现状态（2026-08-29，M6 Phase 0–2 已完成）
 
 功能设计章节描述目标，不代表全部完成；第 9 节与本节描述当前实现。Agent 编程闭环同时具有 Fake LLM 确定性证据和固定 Bug 的真实模型三轮证据。
 
@@ -565,11 +565,11 @@ M6 只纳入项目内 JSON 文件形式的本地单用户 Session/Task/Event 持
 - 只读边界：UTF-8 普通文件、固定忽略规则、拒绝链接、资源预算及截断元数据已实现；不是并发对抗环境下的强沙箱。
 - LLM：OpenAI-compatible 客户端已通过真实供应商联网验收；严格响应/tool call 校验、有限重试与资源关闭继续由确定性测试覆盖。
 - 写入与命令：UTF-8 原子写入、唯一替换、Diff/哈希、精简环境、命令白名单、超时/输出预算/回收已实现；不代表命令内脚本被沙箱隔离。
-- 最新复验：全量 254 passed；Ruff lint/format、前端 20 项 Vitest/严格类型/生产构建及 M5 browser smoke 通过；真实模型新三轮 3/3，平均 12.240 秒。历史阶段数字保留原意。
+- 最新复验：后端全量 276 passed，Ruff lint/format 通过。前端 20 项 Vitest/严格类型/生产构建、M5 browser smoke 及真实模型三轮 3/3（平均 12.240 秒）是 M5 阶段证据，本轮未重新执行。历史阶段数字保留原意。
 - D001：每命令新建 PYTHONPYCACHEPREFIX 并固定禁写字节码，普通 Python 子进程继承；不删除工作区已有缓存，命令结束后清理本次目录。该策略增加冷导入开销，也不是对主动覆盖环境或 sys.modules 热重载的保证。
 - 上下文与终止：字符/估算 token 双总预算计入工具 Schema；最近完整轮次、模型侧结果裁剪、决策轮/重复停止及连续 LLM/Runtime/命令超时阈值均已接入。
 - EventBus 在代码中以每任务 `EventLog` 实现。事件 `id` 是任务内单调递增数字字符串，用于 `Last-Event-ID` / `after` 续传；历史有体积/数量上限，过期游标返回 410，终态已读完返回 204。
-- TaskManager 保留至多 100 个内存任务，超过上限返回 503。Agent 任务会产生逐轮 assistant、工具、文件与命令事件；单 payload 和每任务历史受配置上限保护。
+- TaskManager 只保留活动运行态；终态 Task/Trace/EventLog 可从内存淘汰并由 Repository 惰性读取。生产默认使用 JSON Repository，Session 上限独立于旧 `max_tasks`；Agent 事件的单 payload 和每任务持久历史继续受既有上限保护。
 - 安全：先实现路径越界与常见敏感路径校验、Host/Origin 限制、配置与异常详情不透出；这些不是强沙箱，也不是完备的敏感内容扫描。
 - CLI 帮助已反映本地 Agent；TaskManager 的 NOT_IMPLEMENTED 现在只表示模型三项配置不完整，不再表示 Loop 或工具未实现。
 - 最新验证、文档导航和独立 pytest 临时/缓存运行方式见 [docs/README](README.md)；M5 实测见 [M5 完成说明](Coding%20Agent%20M5%20UX%20重构完成说明.md)。

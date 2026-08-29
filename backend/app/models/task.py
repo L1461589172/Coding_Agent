@@ -69,6 +69,7 @@ class TaskSummary(BaseModel):
 
 
 class Task(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     id: str = Field(default_factory=lambda: str(uuid4()))
     prompt: str
     status: TaskStatus = TaskStatus.PENDING
