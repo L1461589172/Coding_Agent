@@ -2,7 +2,18 @@ import asyncio
 
 from app.agent.runtime import AgentRuntimeError, RuntimeNotReady, TaskRunner
 from app.core.events import EventLimits, EventLog
+from app.history.context import SessionContextBuilder
+from app.history.errors import (
+    HistoryCapacity,
+    HistoryError,
+    SessionActive,
+    SessionNotFound,
+    SessionTaskLimit,
+)
+from app.history.models import PersistedTaskData, SessionData
+from app.history.repository import HistoryRepository, InMemoryHistoryRepository
 from app.models.task import Task, TaskError, TaskStatus, utc_now
+from app.services.trace import ExecutionTrace, TraceRecorder, build_task_summary
 
 
 class TaskBusy(Exception):
@@ -10,6 +21,14 @@ class TaskBusy(Exception):
 
 
 class TaskCapacity(Exception):
+    pass
+
+
+class TaskPersistenceUnavailable(Exception):
+    pass
+
+
+class TaskSessionLimit(Exception):
     pass
 
 
@@ -22,39 +41,105 @@ class TaskManager:
         max_tasks: int = 100,
         mode: str = "scaffold",
         event_limits: EventLimits | None = None,
+        repository: HistoryRepository | None = None,
     ) -> None:
         self.runner = runner
         self.max_tasks = max_tasks
         self.mode = mode
         self.event_limits = event_limits or EventLimits()
+        self.repository = repository or InMemoryHistoryRepository(
+            self.event_limits,
+            max_sessions=max_tasks,
+        )
         self.tasks: dict[str, Task] = {}
         self.logs: dict[str, EventLog] = {}
+        self.traces: dict[str, ExecutionTrace] = {}
         self._active: str | None = None
         self._job: asyncio.Task[None] | None = None
+        self._create_lock = asyncio.Lock()
 
-    def create(self, prompt: str) -> Task:
-        # No await between the check and reservation: concurrent HTTP calls cannot interleave.
+    async def create(self, prompt: str, session_id: str | None = None) -> Task:
+        async with self._create_lock:
+            if self._active is not None or self.repository.has_unfinished_task():
+                raise TaskBusy()
+            task = Task(prompt=prompt, mode=self.mode)
+            trace = ExecutionTrace()
+            try:
+                if session_id is not None:
+                    context = SessionContextBuilder(self.repository).build(session_id)
+                    task.history_rounds = context.rounds
+                    task.history_task_count = context.candidate_tasks
+                await self.repository.create_with_task(task, trace, session_id)
+            except SessionNotFound:
+                raise
+            except SessionTaskLimit as exc:
+                raise TaskSessionLimit() from exc
+            except HistoryCapacity as exc:
+                raise TaskCapacity() from exc
+            except HistoryError as exc:
+                raise TaskPersistenceUnavailable() from exc
+            self.tasks[task.id] = task
+            self.logs[task.id] = EventLog(self.event_limits)
+            self.traces[task.id] = trace
+            self._active = task.id
+            self._job = asyncio.create_task(self._execute(task))
+            return task.model_copy(deep=True)
+
+    def get_session(self, session_id: str) -> SessionData:
+        return self.repository.get_session(session_id)
+
+    def list_sessions(
+        self, limit: int, before: str | None = None
+    ) -> tuple[list[SessionData], str | None]:
+        return self.repository.list_sessions(limit, before)
+
+    def list_session_tasks(
+        self, session_id: str, limit: int, before_ordinal: int | None = None
+    ) -> tuple[list[PersistedTaskData], int | None]:
+        return self.repository.list_session_tasks(session_id, limit, before_ordinal)
+
+    async def delete_session(self, session_id: str) -> None:
+        normalized = self.repository.get_session(session_id).id
         if self._active is not None:
-            raise TaskBusy()
-        if len(self.tasks) >= self.max_tasks:
-            raise TaskCapacity()
-        task = Task(prompt=prompt, mode=self.mode)
-        self.tasks[task.id] = task
-        self.logs[task.id] = EventLog(self.event_limits)
-        self._active = task.id
-        self._job = asyncio.create_task(self._execute(task))
-        return task.model_copy(deep=True)
+            active = self.tasks.get(self._active)
+            if active is not None and active.session_id == normalized:
+                raise SessionActive("Active Session cannot be deleted")
+        await self.repository.delete_session(normalized)
+        for task_id, task in list(self.tasks.items()):
+            if task.session_id == normalized:
+                self.tasks.pop(task_id, None)
+                self.traces.pop(task_id, None)
+                self.logs.pop(task_id, None)
 
     def get(self, task_id: str) -> Task:
-        return self.tasks[task_id].model_copy(deep=True)
+        return self.repository.get_task(task_id)
+
+    def get_log(self, task_id: str) -> EventLog:
+        log = self.logs.get(task_id)
+        if log is not None:
+            return log
+        persisted = self.repository.get_persisted_task(task_id)
+        log = EventLog.from_persisted(
+            persisted.events,
+            persisted.last_event_id,
+            self.event_limits,
+        )
+        self.logs[task_id] = log
+        return log
 
     async def _execute(self, task: Task) -> None:
         log = self.logs[task.id]
+        trace = self.traces[task.id]
+
+        async def commit(event, updated_trace):
+            await self.repository.commit_task_event(task, event, updated_trace)
+
+        recorder = TraceRecorder(log, trace, commit)
         try:
             task.status = TaskStatus.RUNNING
             task.started_at = utc_now()
-            await log.publish(task.id, "task_started", {"mode": task.mode})
-            task.result = await self.runner.run(task.model_copy(deep=True), log)
+            await recorder.publish(task.id, "task_started", {"mode": task.mode})
+            task.result = await self.runner.run(task.model_copy(deep=True), recorder)
             task.status = TaskStatus.COMPLETED
         except RuntimeNotReady:
             task.status = TaskStatus.FAILED
@@ -78,19 +163,33 @@ class TaskManager:
             )
         finally:
             task.finished_at = utc_now()
+            task.summary = build_task_summary(task, trace)
+            terminal_committed = False
             try:
                 if task.status == TaskStatus.COMPLETED:
-                    await log.publish(task.id, "task_completed", {"result": task.result})
+                    payload = {"result": task.result}
                 else:
-                    await log.publish(
-                        task.id,
-                        "task_failed",
-                        {
-                            "error": task.error.model_dump() if task.error else None,
-                        },
-                    )
+                    payload = {"error": task.error.model_dump() if task.error else None}
+                kind = "task_completed" if task.status == TaskStatus.COMPLETED else "task_failed"
+
+                async def persist_terminal(event):
+                    await self.repository.commit_task_event(task, event, trace)
+
+                await log.publish(
+                    task.id,
+                    kind,
+                    payload,
+                    before_notify=persist_terminal,
+                )
+                terminal_committed = True
             finally:
-                self._active = None
+                # A failed durable commit must not make the process accept a new
+                # task while the repository still records this one as active.
+                if terminal_committed:
+                    self._active = None
+                    self.tasks.pop(task.id, None)
+                    self.traces.pop(task.id, None)
+                    self.logs.pop(task.id, None)
 
     async def close(self) -> None:
         if self._job and not self._job.done():
@@ -98,12 +197,28 @@ class TaskManager:
         if self._job:
             await asyncio.gather(self._job, return_exceptions=True)
         # Cancellation can occur before _execute starts, so its finally may never run.
-        if self._active is not None:
-            task = self.tasks[self._active]
-            task.status = TaskStatus.FAILED
-            task.finished_at = utc_now()
-            task.error = TaskError(code="SERVER_SHUTDOWN", message="Service is shutting down")
-            await self.logs[task.id].publish(
-                task.id, "task_failed", {"error": task.error.model_dump()}
-            )
-            self._active = None
+        try:
+            if self._active is not None:
+                task_id = self._active
+                task = self.tasks[task_id]
+                task.status = TaskStatus.FAILED
+                task.finished_at = utc_now()
+                task.error = TaskError(code="SERVER_SHUTDOWN", message="Service is shutting down")
+                trace = self.traces[task.id]
+                task.summary = build_task_summary(task, trace)
+
+                async def persist_terminal(event):
+                    await self.repository.commit_task_event(task, event, trace)
+
+                await self.logs[task.id].publish(
+                    task.id,
+                    "task_failed",
+                    {"error": task.error.model_dump()},
+                    before_notify=persist_terminal,
+                )
+                self._active = None
+                self.tasks.pop(task_id, None)
+                self.traces.pop(task_id, None)
+                self.logs.pop(task_id, None)
+        finally:
+            await self.repository.close()

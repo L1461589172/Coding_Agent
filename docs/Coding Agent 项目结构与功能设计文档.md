@@ -1,12 +1,12 @@
 # Coding Agent 项目结构与功能设计文档
 
-> 版本：v4.0（M4 真实 Demo 收口：Prompt 调优与三轮可靠性）
+> 版本：v5.0（M5 TaskRun UX、ExecutionTrace 与终态 Summary 收口）
 >
 > 修订日期：2026-08-27
 >
 > 目标：在 2026-09-02 24:00 前交付一个能够完成真实编程任务、过程可解释、核心 Agent 逻辑自行实现的本地 MVP。
 
-> 阅读说明：当前 M4 已收口。目标架构不等于当前行为；第 9/13 节描述实际代码。M1–M3 能力均已实现，固定 Calculator Bug 的真实模型正式验收连续 3/3 成功。文档索引和验证口径见 [docs/README](README.md)。
+> 阅读说明：当前 M5 已收口。目标架构不等于当前行为；第 9/13 节描述实际代码。固定 Calculator Bug 在 M5 后重新连续 3/3 成功。文档索引和验证口径见 [docs/README](README.md)。
 
 ## 1. 结论与修订摘要
 
@@ -290,7 +290,7 @@ frontend/
 | 文件 | 功能简介 | 已实现的部分 | 待实现的部分 |
 |---|---|---|---|
 | [index.html](../frontend/index.html) | 页面入口 | 中文语言标记、viewport、标题、`#app` 挂载点及模块入口 | 无本阶段新增项 |
-| [package.json](../frontend/package.json) | 依赖与命令定义 | Vue/Vite/TypeScript 依赖，`dev`、`typecheck`、`build`、`preview` 脚本 | 若引入前端组件单测，再增加测试依赖与脚本；目前无 `test` 脚本 |
+| [package.json](../frontend/package.json) | 依赖与命令定义 | Vue/Vite/TypeScript；Vitest/Playwright 测试依赖；`dev`、`test`、`typecheck`、`build`、`preview` | Browser smoke 仍需要本机 Edge |
 | [package-lock.json](../frontend/package-lock.json) | 锁定依赖解析结果 | 保存 npm 依赖版本与完整性信息，供 `npm ci` 使用 | 无业务逻辑；依赖变更时由 npm 更新，不手改 |
 | [tsconfig.json](../frontend/tsconfig.json) | 类型检查配置 | strict、Bundler 模块解析、DOM 类型及 Vue/TS 文件检查范围 | 无本阶段新增项 |
 | [vite.config.ts](../frontend/vite.config.ts) | 开发与预览服务配置 | Vue 插件、固定 5173 端口、`/api` 和 `/health` 代理；支持 `CODING_AGENT_BACKEND_URL` | 前后端单端口交付需后端静态托管配合；当前构建预览仍依赖独立后端 |
@@ -475,7 +475,7 @@ TaskManager / Runtime -> core/events.py（EventLog）
 | [tests/test_m2_runtime_completion.py](../tests/test_m2_runtime_completion.py) | 事件 payload/历史限制与 410；真实文件/命令事件；连续错误阈值；关闭中写入与命令清理 | 真实供应商与前端专用卡片不在确定性单测范围 |
 | [tests/test_m3_api_ui_contracts.py](../tests/test_m3_api_ui_contracts.py) | 断线游标回放、大型专用事件、成功/失败终态一致性与服务重启 404 | 真实供应商和视觉回归属于后续/可选验收 |
 | [tests/test_task_manager.py](../tests/test_task_manager.py) | 创建后立即关闭、注入测试 Runner 的成功分支 | 默认 Runtime 完成/结构化失败另由 test_agent_runtime 覆盖 |
-| [scripts/smoke_browser.cjs](../scripts/smoke_browser.cjs) | 用可选 Playwright/Edge 检查 scaffold 提交、三事件、整页刷新恢复、未实现结果与窄屏布局 | 非真实模型 Agent 修复 E2E；专用卡片由类型/构建与 API 契约覆盖 |
+| [scripts/smoke_browser.cjs](../scripts/smoke_browser.cjs) | 用 Playwright/Edge 检查 failed/running/completed、附件、刷新、410/404/204、focus 与窄屏 | 完成态使用确定性 API/SSE fixture；真实供应商由 M4 脚本独立验收 |
 | [scripts/test.ps1](../scripts/test.ps1) | 使用仓库虚拟环境与独立随机临时/缓存目录运行 pytest，转发退出码 | 不自动删除历史临时目录；不支持 PowerShell 的平台使用等价 Python 命令 |
 | [demo_workspace/README.md](../demo_workspace/README.md) | 可重复 Calculator Bug 工作区 | 初始 1 failed/1 passed；Agent 应只修改实现并使 2 项测试通过 |
 | [scripts/run_m4_demo.py](../scripts/run_m4_demo.py) | 真实模型重复验收器 | 每轮重置、基线失败、Task/SSE、测试哈希、Agent/独立 pytest 与终态核对 | 联网运行产生真实费用；报告写入被忽略的 output |
@@ -491,13 +491,16 @@ TaskManager / Runtime -> core/events.py（EventLog）
 | M3：已实现 | 专用 Tool/Shell/File Change 卡片、严格契约、有界重连和整页恢复已完成；统计可选 | 事件 API、历史窗口与终态契约已验证 | `App.vue`、`types.ts`、`api/client.ts`、`components/`；`tests/test_m3_api_ui_contracts.py` |
 | P1：Workspace / 静态托管 | 文件树、Code Viewer、Diff Viewer | 文件查询 API、前端静态产物托管 | 未来扩展 `components/`、`api/routes.py`、`main.py`；新增文件名尚未确定 |
 | M4：已实现 | 展示真实改动、命令结果和终态；三轮 3/3 成功 | Calculator Bug 的 Agent/独立 pytest 双重验收已完成 | `demo_workspace/`、`scripts/run_m4_demo.py`、`tests/test_m4_demo.py` |
+| M5：已实现 | ConversationThread、可组合 TaskRun、确定性活动聚合、File/Command 附件、响应式与无障碍 | 完整有界 Trace、成功/失败 Summary 和 M6 前向兼容接口 | `frontend/src/`、`services/trace.py`、`models/task.py`、`services/tasks.py`；详见 M5 完成说明 |
+| M6：已实现 | 历史 Sidebar、多 TaskRun Thread、新会话/follow-up、URL/recent-context v2、懒加载活动与删除 | 项目内版本化 JSON Repository、原子替换/锁、迁移/隔离、持久 Task/Event、重启收敛、Session API、确定性有界 TaskRecap、trash 删除与容量治理 | `backend/app/history/`、`services/tasks.py`、`frontend/src/AppM6.vue`；详见 M6 计划 |
+| M7：最终交付 | 不新增产品功能 | README.txt、视频、密钥扫描和最终提交检查 | 根目录与交付材料；不由 M5/M6 P1 挤占 |
 
-多用户、并行任务、长期记忆和数据库持久化不因本表列出待办而自动纳入本轮范围。后续新增或完成文件时，应同时更新本节“已实现/待实现”列与实施计划，避免仅以存在同名文件判断功能完成。
+M6 只纳入项目内 JSON 文件形式的本地单用户 Session/Task/Event 持久化和有界多轮 TaskRecap；不引入数据库，多用户、并行任务、向量/自动长期记忆仍不在范围内。后续新增或完成文件时，应同时更新本节“已实现/待实现”列与实施计划，避免仅以存在同名文件判断功能完成。
 
 ## 10. 关键决策及理由
 
 1. **单任务串行**：演示目标关注 Agent 自主闭环，不值得在最后一周承担并发隔离风险。
-2. **内存状态**：任务持久化不是要求；内存模型更容易保证事件顺序并快速调试。
+2. **持久历史、短暂运行态**：Repository 是 Session/Task/Event 的历史事实源；内存只保存当前活动调度、订阅与惰性缓存。
 3. **SSE 而非 WebSocket**：服务端只需单向推送事件，SSE 实现更少、浏览器原生支持重连。
 4. **精确替换优先**：`replace_in_file` 要求唯一命中，比让模型整文件重写更容易审计和生成 diff。
 5. **确定性停止器**：模型负责决策，但 Runtime 必须能制止无限循环、重复动作和卡死命令。
@@ -551,7 +554,7 @@ TaskManager / Runtime -> core/events.py（EventLog）
 
 这个范围既满足题目对“编程智能体”的定义，也把时间投入集中在评委会追问的部分：Agent 为什么这样运行、每一步由谁决定、工具如何落地、错误怎样反馈、循环为何会停止。
 
-## 13. 当前实现状态（2026-08-28，M4 真实 Demo 已完成）
+## 13. 当前实现状态（2026-08-29，M6 已完成）
 
 功能设计章节描述目标，不代表全部完成；第 9 节与本节描述当前实现。Agent 编程闭环同时具有 Fake LLM 确定性证据和固定 Bug 的真实模型三轮证据。
 
@@ -562,11 +565,11 @@ TaskManager / Runtime -> core/events.py（EventLog）
 - 只读边界：UTF-8 普通文件、固定忽略规则、拒绝链接、资源预算及截断元数据已实现；不是并发对抗环境下的强沙箱。
 - LLM：OpenAI-compatible 客户端已通过真实供应商联网验收；严格响应/tool call 校验、有限重试与资源关闭继续由确定性测试覆盖。
 - 写入与命令：UTF-8 原子写入、唯一替换、Diff/哈希、精简环境、命令白名单、超时/输出预算/回收已实现；不代表命令内脚本被沙箱隔离。
-- 最新复验：全量 248 passed，Ruff 覆盖后端/测试/M4 脚本，前端严格类型/生产构建通过；真实模型正式三轮 3/3 成功，平均 12.537 秒。历史阶段数字保留原意。
+- 最新复验：后端全量 281 passed，Ruff lint/format 通过；前端 20 项 Vitest、严格类型、生产构建与 M6 browser smoke 通过。M6 真实模型多轮/重启 smoke 3/3 COMPLETED、8 项检查全过；M4 三轮 3/3 保留为历史证据。
 - D001：每命令新建 PYTHONPYCACHEPREFIX 并固定禁写字节码，普通 Python 子进程继承；不删除工作区已有缓存，命令结束后清理本次目录。该策略增加冷导入开销，也不是对主动覆盖环境或 sys.modules 热重载的保证。
 - 上下文与终止：字符/估算 token 双总预算计入工具 Schema；最近完整轮次、模型侧结果裁剪、决策轮/重复停止及连续 LLM/Runtime/命令超时阈值均已接入。
 - EventBus 在代码中以每任务 `EventLog` 实现。事件 `id` 是任务内单调递增数字字符串，用于 `Last-Event-ID` / `after` 续传；历史有体积/数量上限，过期游标返回 410，终态已读完返回 204。
-- TaskManager 保留至多 100 个内存任务，超过上限返回 503。Agent 任务会产生逐轮 assistant、工具、文件与命令事件；单 payload 和每任务历史受配置上限保护。
+- TaskManager 只保留活动运行态；终态 Task/Trace/EventLog 可从内存淘汰并由 Repository 惰性读取。生产默认使用 JSON Repository，Session 上限独立于旧 `max_tasks`；Agent 事件的单 payload 和每任务持久历史继续受既有上限保护。
 - 安全：先实现路径越界与常见敏感路径校验、Host/Origin 限制、配置与异常详情不透出；这些不是强沙箱，也不是完备的敏感内容扫描。
 - CLI 帮助已反映本地 Agent；TaskManager 的 NOT_IMPLEMENTED 现在只表示模型三项配置不完整，不再表示 Loop 或工具未实现。
-- 最新验证、文档导航和独立 pytest 临时/缓存运行方式见 [docs/README](README.md)；M3 恢复语义见 [M3 说明](Coding%20Agent%20M3%20API%20与%20UI%20完成说明.md)。前端构建已复验；可选浏览器 smoke 未在缺少 Playwright 的当前环境冒充执行。
+- 最新验证、文档导航和独立 pytest 临时/缓存运行方式见 [docs/README](README.md)；M5 实测见 [M5 完成说明](Coding%20Agent%20M5%20UX%20重构完成说明.md)。

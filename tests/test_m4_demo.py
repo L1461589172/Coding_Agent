@@ -17,9 +17,9 @@ def test_demo_workspace_starts_with_a_real_failing_bug():
     assert module.divide(10, 2) == 5
     with pytest.raises(ZeroDivisionError):
         module.divide(10, 0)
-    assert "assert divide(10, 0) is None" in (
-        DEMO / "test_calculator.py"
-    ).read_text(encoding="utf-8")
+    assert "assert divide(10, 0) is None" in (DEMO / "test_calculator.py").read_text(
+        encoding="utf-8"
+    )
 
 
 def test_system_prompt_requires_inspect_edit_verify_and_real_test_success():

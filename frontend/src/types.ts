@@ -5,8 +5,40 @@ export interface TaskError {
   message: string
 }
 
+export interface CommandSummary {
+  command: string
+  ok: boolean
+  exit_code: number | null
+  timed_out: boolean
+  cleanup_ok: boolean
+  duration_ms: number | null
+  error_code: string | null
+}
+
+export interface VerificationSummary {
+  kind: 'pytest'
+  command: string
+  passed: boolean
+  exit_code: number | null
+  output_excerpt: string | null
+  output_truncated: boolean
+}
+
+export interface TaskSummary {
+  files_read: string[]
+  files_changed: string[]
+  commands: CommandSummary[]
+  verification: VerificationSummary | null
+  tool_calls: number
+  decision_steps: number
+  error_codes: string[]
+  duration_ms: number | null
+}
+
 export interface Task {
   id: string
+  session_id: string
+  ordinal: number
   prompt: string
   status: TaskStatus
   mode: string
@@ -15,6 +47,28 @@ export interface Task {
   finished_at: string | null
   result: string | null
   error: TaskError | null
+  summary: TaskSummary | null
+}
+
+export interface SessionListItem {
+  id: string
+  title: string
+  created_at: string
+  updated_at: string
+  task_count: number
+  last_task_id: string | null
+  last_task_status: TaskStatus | null
+  history_incomplete: boolean
+}
+
+export interface SessionPage {
+  items: SessionListItem[]
+  next_cursor: string | null
+}
+
+export interface TaskPage {
+  items: Task[]
+  next_before_ordinal: number | null
 }
 
 export interface ToolResultPayload {
@@ -176,6 +230,48 @@ function isTaskError(value: unknown): value is TaskError {
   return isRecord(value) && isString(value.code) && isString(value.message)
 }
 
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(isString)
+}
+
+function isCommandSummary(value: unknown): value is CommandSummary {
+  return isRecord(value)
+    && isString(value.command)
+    && isBoolean(value.ok)
+    && isNullableNumber(value.exit_code)
+    && isBoolean(value.timed_out)
+    && isBoolean(value.cleanup_ok)
+    && isNullableNumber(value.duration_ms)
+    && isNullableString(value.error_code)
+}
+
+function isVerificationSummary(value: unknown): value is VerificationSummary {
+  return isRecord(value)
+    && value.kind === 'pytest'
+    && isString(value.command)
+    && isBoolean(value.passed)
+    && isNullableNumber(value.exit_code)
+    && isNullableString(value.output_excerpt)
+    && isBoolean(value.output_truncated)
+}
+
+function isTaskSummary(value: unknown): value is TaskSummary {
+  return isRecord(value)
+    && isStringArray(value.files_read)
+    && isStringArray(value.files_changed)
+    && Array.isArray(value.commands)
+    && value.commands.every(isCommandSummary)
+    && (value.verification === null || isVerificationSummary(value.verification))
+    && isNumber(value.tool_calls)
+    && Number.isInteger(value.tool_calls)
+    && value.tool_calls >= 0
+    && isNumber(value.decision_steps)
+    && Number.isInteger(value.decision_steps)
+    && value.decision_steps >= 0
+    && isStringArray(value.error_codes)
+    && isNullableNumber(value.duration_ms)
+}
+
 function isToolResult(value: unknown): value is ToolResultPayload {
   return isRecord(value)
     && isBoolean(value.ok)
@@ -188,6 +284,10 @@ function isToolResult(value: unknown): value is ToolResultPayload {
 export function parseTask(value: unknown): Task {
   if (!isRecord(value)
     || !isString(value.id)
+    || !isString(value.session_id)
+    || !isNumber(value.ordinal)
+    || !Number.isInteger(value.ordinal)
+    || value.ordinal < 1
     || !isString(value.prompt)
     || !isString(value.status)
     || !TASK_STATUSES.has(value.status as TaskStatus)
@@ -196,10 +296,51 @@ export function parseTask(value: unknown): Task {
     || !isNullableString(value.started_at)
     || !isNullableString(value.finished_at)
     || !isNullableString(value.result)
-    || !(value.error === null || isTaskError(value.error))) {
+    || !(value.error === null || isTaskError(value.error))
+    || !(value.summary === null || isTaskSummary(value.summary))) {
     throw new Error('后端返回了无效的任务数据')
   }
   return value as unknown as Task
+}
+
+function isSession(value: unknown): value is SessionListItem {
+  return isRecord(value)
+    && isString(value.id)
+    && isString(value.title)
+    && isString(value.created_at)
+    && isString(value.updated_at)
+    && isNumber(value.task_count)
+    && Number.isInteger(value.task_count)
+    && value.task_count >= 0
+    && isNullableString(value.last_task_id)
+    && (value.last_task_status === null
+      || (isString(value.last_task_status) && TASK_STATUSES.has(value.last_task_status as TaskStatus)))
+    && isBoolean(value.history_incomplete)
+}
+
+export function parseSession(value: unknown): SessionListItem {
+  if (!isSession(value)) throw new Error('后端返回了无效的会话数据')
+  return value
+}
+
+export function parseSessionPage(value: unknown): SessionPage {
+  if (!isRecord(value) || !Array.isArray(value.items) || !value.items.every(isSession)
+    || !isNullableString(value.next_cursor)) {
+    throw new Error('后端返回了无效的会话列表')
+  }
+  return value as unknown as SessionPage
+}
+
+export function parseTaskPage(value: unknown): TaskPage {
+  if (!isRecord(value) || !Array.isArray(value.items)
+    || !value.items.every((item) => {
+      try { parseTask(item); return true } catch { return false }
+    })
+    || !(value.next_before_ordinal === null
+      || (isNumber(value.next_before_ordinal) && Number.isInteger(value.next_before_ordinal)))) {
+    throw new Error('后端返回了无效的任务列表')
+  }
+  return value as unknown as TaskPage
 }
 
 export function parseMetadata(value: unknown): Metadata {

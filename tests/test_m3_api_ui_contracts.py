@@ -7,11 +7,8 @@ from fastapi.testclient import TestClient
 
 
 def decode_sse(response) -> list[dict]:
-    return [
-        json.loads(line[6:])
-        for line in response.text.splitlines()
-        if line.startswith("data: ")
-    ]
+    lines = response.text.splitlines()
+    return [json.loads(line[6:]) for line in lines if line.startswith("data: ")]
 
 
 class SuccessfulRunner:
@@ -26,8 +23,14 @@ class SuccessfulRunner:
         return "done"
 
 
-def test_reconnect_replays_only_missing_events_and_agrees_with_task_state(tmp_path):
-    app = create_app(Settings(workspace=tmp_path), runner=SuccessfulRunner())
+def test_reconnect_replays_only_missing_events_and_agrees_with_task_state(tmp_path, history_dir):
+    app = create_app(
+        Settings(
+            workspace=tmp_path,
+            history_dir=history_dir,
+        ),
+        runner=SuccessfulRunner(),
+    )
     with TestClient(app, base_url="http://127.0.0.1:8000") as client:
         task = client.post("/api/tasks", json={"prompt": "finish"}).json()
         full = decode_sse(client.get(f"/api/tasks/{task['id']}/events"))
@@ -40,7 +43,9 @@ def test_reconnect_replays_only_missing_events_and_agrees_with_task_state(tmp_pa
         assert client.get(f"/api/tasks/{task['id']}/events?after=6").status_code == 204
 
 
-def test_large_specialized_payloads_are_bounded_and_terminal_event_is_retained(tmp_path):
+def test_large_specialized_payloads_are_bounded_and_terminal_event_is_retained(
+    tmp_path, history_dir
+):
     class LargePayloadRunner:
         async def run(self, task, events):
             common = {"call_id": "call-large", "tool": "write_file"}
@@ -113,6 +118,7 @@ def test_large_specialized_payloads_are_bounded_and_terminal_event_is_retained(t
     app = create_app(
         Settings(
             workspace=tmp_path,
+            history_dir=history_dir,
             event_max_payload_characters=512,
             event_max_history_characters=16_000,
             event_max_history_events=32,
@@ -135,20 +141,24 @@ def test_large_specialized_payloads_are_bounded_and_terminal_event_is_retained(t
         ]
         for event in events[2:5]:
             assert event["payload"]["payload_truncated"] is True
-            payload_text = json.dumps(
-                event["payload"], ensure_ascii=False, separators=(",", ":")
-            )
+            payload_text = json.dumps(event["payload"], ensure_ascii=False, separators=(",", ":"))
             assert len(payload_text) <= 512
         assert events[-1]["payload"] == {"result": "large payload handled"}
         assert client.get(f"/api/tasks/{task['id']}").json()["status"] == "COMPLETED"
 
 
-def test_failed_terminal_event_agrees_with_task_state(tmp_path):
+def test_failed_terminal_event_agrees_with_task_state(tmp_path, history_dir):
     class FailingRunner:
         async def run(self, task, events):
             raise AgentRuntimeError("FIXTURE_FAILURE", "controlled failure")
 
-    app = create_app(Settings(workspace=tmp_path), runner=FailingRunner())
+    app = create_app(
+        Settings(
+            workspace=tmp_path,
+            history_dir=history_dir,
+        ),
+        runner=FailingRunner(),
+    )
     with TestClient(app, base_url="http://127.0.0.1:8000") as client:
         task = client.post("/api/tasks", json={"prompt": "fail"}).json()
         events = decode_sse(client.get(f"/api/tasks/{task['id']}/events"))
@@ -160,13 +170,21 @@ def test_failed_terminal_event_agrees_with_task_state(tmp_path):
         assert latest["error"] == events[-1]["payload"]["error"]
 
 
-def test_service_restart_does_not_claim_in_memory_task_can_be_restored(tmp_path):
-    first_app = create_app(Settings(workspace=tmp_path), runner=SuccessfulRunner())
+def test_service_restart_restores_terminal_task_and_events(tmp_path, history_dir):
+    settings = Settings(
+        workspace=tmp_path,
+        history_dir=history_dir,
+    )
+    first_app = create_app(settings, runner=SuccessfulRunner())
     with TestClient(first_app, base_url="http://127.0.0.1:8000") as client:
         task = client.post("/api/tasks", json={"prompt": "before restart"}).json()
         assert client.get(f"/api/tasks/{task['id']}/events").status_code == 200
 
-    restarted_app = create_app(Settings(workspace=tmp_path), runner=SuccessfulRunner())
+    restarted_app = create_app(settings, runner=SuccessfulRunner())
     with TestClient(restarted_app, base_url="http://127.0.0.1:8000") as client:
-        assert client.get(f"/api/tasks/{task['id']}").status_code == 404
-        assert client.get(f"/api/tasks/{task['id']}/events").status_code == 404
+        restored = client.get(f"/api/tasks/{task['id']}")
+        assert restored.status_code == 200
+        assert restored.json()["status"] == "COMPLETED"
+        replay = client.get(f"/api/tasks/{task['id']}/events")
+        assert replay.status_code == 200
+        assert decode_sse(replay)[-1]["type"] == "task_completed"

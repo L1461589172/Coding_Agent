@@ -1,7 +1,7 @@
 import asyncio
 
 import pytest
-from app.core.events import EventLog
+from app.core.events import EventLimits, EventLog
 
 
 def test_live_subscription_then_replay():
@@ -34,5 +34,36 @@ def test_heartbeat_and_reader_disconnect():
         await stream.aclose()
         await log.publish("task", "task_failed", {})
         assert log.closed
+
+    asyncio.run(scenario())
+
+
+def test_persisted_replay_applies_a_lower_restart_limit_without_renumbering():
+    async def scenario():
+        original = EventLog(
+            EventLimits(
+                max_payload_characters=256,
+                max_history_characters=4_000,
+                max_history_events=10,
+            )
+        )
+        for number in range(5):
+            await original.publish("task", "assistant_message", {"number": number})
+        await original.publish("task", "task_completed", {"result": "done"})
+
+        restored = EventLog.from_persisted(
+            original._events,
+            original.last_id,
+            EventLimits(
+                max_payload_characters=256,
+                max_history_characters=4_000,
+                max_history_events=3,
+            ),
+        )
+        assert [int(event.id) for event in restored._events] == [4, 5, 6]
+        assert restored.last_id == 6
+        assert restored.closed is True
+        assert restored.cursor_available(2) is False
+        assert restored.cursor_available(3) is True
 
     asyncio.run(scenario())

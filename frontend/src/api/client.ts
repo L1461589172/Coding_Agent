@@ -1,10 +1,16 @@
 import {
   parseAgentEvent,
   parseMetadata,
+  parseSession,
+  parseSessionPage,
   parseTask,
+  parseTaskPage,
   type AgentEvent,
   type Metadata,
+  type SessionListItem,
+  type SessionPage,
   type Task,
+  type TaskPage,
 } from '../types'
 
 export class ApiError extends Error {
@@ -39,6 +45,29 @@ export const getTask = (id: string): Promise<Task> => request(
 export const createTask = (prompt: string): Promise<Task> => request('/api/tasks', parseTask, {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt }),
 })
+export const getSessions = (before?: string): Promise<SessionPage> => request(
+  `/api/sessions?limit=20${before ? `&before=${encodeURIComponent(before)}` : ''}`,
+  parseSessionPage,
+)
+export const getSession = (id: string): Promise<SessionListItem> => request(
+  `/api/sessions/${encodeURIComponent(id)}`,
+  parseSession,
+)
+export const getSessionTasks = (id: string, before?: number): Promise<TaskPage> => request(
+  `/api/sessions/${encodeURIComponent(id)}/tasks?limit=20${before ? `&before_ordinal=${before}` : ''}`,
+  parseTaskPage,
+)
+export const createFollowUp = (id: string, prompt: string): Promise<Task> => request(
+  `/api/sessions/${encodeURIComponent(id)}/tasks`,
+  parseTask,
+  { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt }) },
+)
+export async function deleteSession(id: string): Promise<void> {
+  const response = await fetch(`/api/sessions/${encodeURIComponent(id)}`, {
+    method: 'DELETE', signal: AbortSignal.timeout(10000),
+  })
+  if (!response.ok) throw new ApiError(response.status, `删除失败（HTTP ${response.status}）`)
+}
 
 export interface WatchCallbacks {
   onEvent: (event: AgentEvent) => void

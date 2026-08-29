@@ -2,7 +2,7 @@
 
 本地自主编程智能体：Vue 3 + TypeScript + FastAPI，自研 Agent Loop，不使用 Agent 框架/SDK 或托管代码执行工具。
 
-> M1 六工具、M2 Agent Runtime、M3 API/UI 与 M4 Demo 已完成：真实模型在固定 Bug Demo 上连续 3/3 成功，模型自主检查、最小修改并运行 pytest，页面可观察完整真实事件。
+> M1–M6 已完成；当前已具备版本化 JSON 历史、可恢复 Session/follow-up、有界多轮上下文、历史 UI、隐私删除和资源上限。M7 只负责最终交付材料与发布检查。
 
 ## 环境要求
 
@@ -86,7 +86,7 @@ npm.cmd run dev
 
 1. 打开 [健康检查](http://127.0.0.1:8000/health)，确认返回 `status: "ok"`。
 2. 打开 [Swagger 接口文档](http://127.0.0.1:8000/docs)，确认接口列表可见。
-3. 在前端输入任务并点击“开始任务”。
+3. 在前端输入任务并点击“开始新任务”。
 4. 未配置模型时会看到 `NOT_IMPLEMENTED`；三项模型配置完整时，`agent_ready=true` 并执行 Agent Loop，最终为 completed 或结构化失败。
 
 也可以用 PowerShell 检查后端：
@@ -99,9 +99,23 @@ Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health'
 
 ### 6. 停止与再次启动
 
-两个服务分别在对应终端按 `Ctrl+C` 退出。停止后端会清空内存任务历史；当前没有用户任务取消 API。
+两个服务分别在对应终端按 `Ctrl+C` 退出。后端会先把活动任务收敛为 `SERVER_SHUTDOWN`，再释放历史文件锁和模型客户端；已提交的任务、Summary 与有界事件不会因正常重启丢失。当前没有用户任务取消 API。
 
 下次只需分别执行第 3、4 步。后端没有启用代码热重载，修改 Python 代码后需重启；前端开发模式由 Vite 更新页面。
+
+### 本地历史存储与多轮会话（M6）
+
+默认历史位于仓库根目录 `/.coding-agent/history/`，按 Workspace 规范化绝对路径的 SHA-256 fingerprint 隔离，并被 Git ignore 与六工具路径守卫同时阻止。历史使用版本化 JSON，而不是数据库；Task JSON 是 Task、Trace、Summary 与已裁剪事件的事实源，Session/index 是可重建投影。
+
+- 新任务在返回 202 前落盘；事件和终态在 SSE 可见前原子提交。
+- 正常重启后，现有 GET Task 和 SSE replay 仍可读取终态任务；意外中断留下的 PENDING/RUNNING 任务在下次启动时只收敛一次为 `SERVER_RESTARTED`，不会重放模型或工具调用。
+- 同一历史目录只允许一个后端写入；格式高于当前程序、关键格式损坏或目录链接越界会拒绝启动，不会静默退回内存历史。
+- 损坏的 index/session 投影会保留到 `quarantine/` 后重建；单个损坏 Task 会被隔离并把仍可恢复的 Session 标记为不完整。
+- JSON 会保存用户 Prompt 和模型结果。不要在任务正文中提交密码、API Key 或其他秘密，也不要把 `.coding-agent` 目录同步或提交到版本库。
+
+前端 Sidebar 可分页浏览 Session；每个 Session 按 ordinal 展示多个 TaskRun，旧事件按需加载。选中终态 Session 后可继续对话；历史 Task 只以确定性、有界 TaskRecap 进入模型，工具 Schema 和当前 Prompt 仍由 M2 的统一字符/token 总预算优先保障，旧 ToolResult、Diff、stdout/stderr、call_id 和 StopController 状态不会重放。
+
+删除入口会先确认并拒绝活动 Session，再把当前数据以及备份/quarantine 中可识别的同 Session 数据原子移入 trash、从索引移除并后台清理。删除不是安全擦除；文件系统快照、同步盘或磁盘恢复仍可能保留副本。当前自动按天删除未启用，`HISTORY_MAX_AGE_DAYS` 是保留策略配置位；数据增长由 Session/Task/Event 和 512 MiB 总字节硬上限约束，并提供显式删除。不要手工编辑正在被服务使用的历史目录。
 
 ## 环境变量配置
 
@@ -125,9 +139,16 @@ Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health'
 | `CODING_AGENT_CONTEXT_MAX_TOKENS` | `20000` | 后端：消息与工具 Schema 的估算 token 总预算 | 已接入 Conversation |
 | `CODING_AGENT_TOOL_RESULT_MAX_CHARACTERS` | `12000` | 后端：单个模型侧 ToolResult 上限，至少 256 | 不改变工具自身输出上限 |
 | `CODING_AGENT_CONTEXT_RECENT_ROUNDS` | `8` | 后端：最多保留的最近完整轮次 | 已接入 Conversation |
-| `CODING_AGENT_EVENT_MAX_PAYLOAD_CHARACTERS` | `12000` | 后端：单事件 payload 字符上限，至少 256 | 超限转换为带元数据的预览信封 |
-| `CODING_AGENT_EVENT_MAX_HISTORY_CHARACTERS` | `256000` | 后端：每任务 SSE 历史字符上限，至少覆盖单 payload 加 1024 字符信封 | 超限淘汰最旧事件 |
-| `CODING_AGENT_EVENT_MAX_HISTORY_EVENTS` | `512` | 后端：每任务最多保留事件数，必须为正整数 | 事件 ID 始终单调递增 |
+| `CODING_AGENT_EVENT_MAX_PAYLOAD_CHARACTERS` | `12000` | 后端：单事件 payload 字符上限，format v1 范围 256–12000 | 超限转换为带元数据的预览信封 |
+| `CODING_AGENT_EVENT_MAX_HISTORY_CHARACTERS` | `256000` | 后端：每任务 SSE 历史字符上限，不超过 format v1 的 256000 | 至少覆盖单 payload 加 1024；超限淘汰最旧事件 |
+| `CODING_AGENT_EVENT_MAX_HISTORY_EVENTS` | `512` | 后端：每任务最多保留事件数，format v1 范围 1–512 | 事件 ID 始终单调递增；重启降低配置时不重编号 |
+| `CODING_AGENT_HISTORY_DIR` | `<项目根>/.coding-agent/history` | 后端：高级历史目录覆盖，必须是绝对路径 | 默认目录受项目根边界校验；生产不降级为内存 |
+| `CODING_AGENT_HISTORY_MAX_SESSIONS` | `200` | 后端：format v1 的 Session 硬上限，1–200 | 达到上限时新建任务返回 503 |
+| `CODING_AGENT_HISTORY_MAX_TASKS_PER_SESSION` | `100` | 后端：format v1 的单 Session Task 上限，1–100 | follow-up 达到上限时返回 409 |
+| `CODING_AGENT_HISTORY_BACKUP_LIMIT` | `3` | 后端：格式迁移前备份数量上限 | 已接入 v0→v1 迁移 |
+| `CODING_AGENT_HISTORY_BACKUP_MAX_BYTES` | `67108864` | 后端：迁移备份累计字节上限 | 超限拒绝迁移并保持旧 CURRENT |
+| `CODING_AGENT_HISTORY_MAX_AGE_DAYS` | `90` | 后端：历史保留策略配置 | P0 不自动按天删除；使用显式删除和其他硬上限 |
+| `CODING_AGENT_HISTORY_MAX_BYTES` | `536870912` | 后端：history/backups/trash/quarantine 总字节硬上限 | 新增或扩大的历史写入超限时返回 503 |
 | `CODING_AGENT_MAX_CONSECUTIVE_LLM_ERRORS` | `3` | 后端：Agent 级连续可恢复模型错误阈值 | 不替代客户端内部 HTTP 重试 |
 | `CODING_AGENT_MAX_CONSECUTIVE_RUNTIME_ERRORS` | `3` | 后端：连续工具基础设施错误阈值 | 达到阈值结构化终止 |
 | `CODING_AGENT_MAX_CONSECUTIVE_COMMAND_TIMEOUTS` | `3` | 后端：连续命令超时阈值 | 达到阈值结构化终止 |
@@ -244,7 +265,7 @@ $pytestRunDir = Join-Path $env:TEMP ("coding-agent-pytest-" + [guid]::NewGuid().
 
 按实际克隆位置调整上述绝对路径。pytest 会清空 `--basetemp`：必须使用新建的专用随机路径，不能指定项目根目录或已有数据目录。脚本不删除旧测试目录；运行记录保留在系统临时目录，便于检查失败样例。
 
-当前在 Windows/Python 3.12 下全量 **248 项确定性测试通过**，并完成真实模型三轮 Demo（3/3 成功）。确定性模型测试继续使用 MockTransport/Fake LLM；真实 Demo 会产生供应商费用。详细记录见 [M4 说明](docs/Coding%20Agent%20M4%20Demo%20与%20可靠性完成说明.md)、[M3 说明](docs/Coding%20Agent%20M3%20API%20与%20UI%20完成说明.md) 与 [M2 Loop 说明](docs/Coding%20Agent%20M2%20上下文预算与%20Agent%20Loop%20说明.md)。保留既有 Starlette/httpx 弃用提示；前端严格类型检查与生产构建通过。
+当前在 Windows/Python 3.12 下后端全量 **281 项确定性测试通过**，Ruff lint/format 通过；前端 **20 passed**、严格类型、生产构建和 M6 browser smoke 通过。2026-08-29 经授权执行 M6 真实模型三轮多轮/重启 smoke：3/3 COMPLETED，ordinal 1→2→3，重启恢复、两轮 follow-up 重新读文件并运行 pytest、API Key 不进入历史等 8 项检查全部通过，总耗时 34.688 秒。M4 独立真实模型 Demo 的历史证据仍为 3/3，本轮未重复产生该组费用。保留既有 Starlette/httpx 弃用提示。
 
 三类机制应分开处理：`--basetemp` 隔离 pytest 临时目录及账户权限；`cache_dir` 管理 pytest 状态缓存；Python/pytest 字节码则由 `run_command` 为每次命令设置独立 `PYTHONPYCACHEPREFIX` 并禁写常规字节码。修复不删除工作区已有 `.pyc`，也不要求手动清缓存。该策略只作用于工具命令，不接管用户手动启动的 Python。
 
@@ -252,12 +273,13 @@ $pytestRunDir = Join-Path $env:TEMP ("coding-agent-pytest-" + [guid]::NewGuid().
 
 ```powershell
 npm.cmd run typecheck
+npm.cmd test
 npm.cmd run build
 ```
 
 `constraints.txt` 记录本次已验证的 Python 依赖快照，`frontend/package-lock.json` 锁定前端依赖。测试不使用真实模型或凭据。
 
-可选浏览器 smoke test 位于 `scripts/smoke_browser.cjs`：需要独立提供 Playwright、安装 Microsoft Edge，并先按上文启动两个服务。它检查元数据、任务提交、三个 SSE 事件、整页刷新恢复、未实现结果和移动端溢出，截图保存到被 Git 忽略的 `output/qa/`。Playwright 不属于 Agent 运行依赖。
+浏览器 smoke test 位于 `scripts/smoke_browser.cjs`；Playwright 已作为前端测试依赖锁定，仍需本机 Microsoft Edge，并先按上文启动两个服务。它检查失败/运行中/完成态、聚合附件、整页刷新、410/404/204、键盘焦点和 390px 溢出，截图保存到被 Git 忽略的 `output/qa/`。Playwright 不属于 Agent 运行依赖。
 
 ## 常见问题
 
@@ -291,7 +313,7 @@ backend/app/
   tools/        # Workspace 守卫、六个工具、原子写入/Diff、命令策略与进程管理
   cli.py        # coding-agent 命令
   main.py       # FastAPI 应用工厂
-frontend/src/   # Vue 任务输入、状态、时间线和 API 客户端
+frontend/src/   # Vue TaskRun 线程、确定性 Formatter、状态恢复和 API 客户端
 tests/          # 不使用真实 LLM 的后端测试
 scripts/        # 独立临时目录测试脚本、可选浏览器检查
 demo_workspace/ # 初始 pytest 失败的可重复 Calculator Bug Demo
@@ -300,23 +322,28 @@ docs/           # 设计、实施计划与修改说明
 
 ## 当前边界
 
-- 内存状态、最多 100 个任务；达到上限返回 503，重启服务会清空历史。
+- 运行态仍是全局单活动 Task；历史事实由项目内 JSON Repository 保存，正常重启不会清空。format v1 默认最多 200 Session、每 Session 100 Task，达到容量或总字节上限时拒绝新写入。
 - TaskManager 仅适用于单进程、单 event loop；不要使用多 worker 部署。
 - Workspace 已拒绝越界、常见敏感路径、链接/reparse point、硬链接及 Windows 设备/短名称等歧义路径，但不是 OS 沙箱，不能消除所有并发文件系统竞争。
 - 六个工具均已实现，可独立调用；写入只接受受限大小的 UTF-8 普通文件，替换必须唯一匹配。详细参数、错误码和示例见 M1 完成说明。
 - `run_command` 接受 Python/pytest、Node 工作区脚本、npm 本地脚本和 echo 等白名单入口，不解释管道/重定向。获准脚本仍可访问工作区外文件和网络，必须只运行可信项目。
 - 命令使用精简子进程环境、输出上限、超时、Windows Job Object/POSIX 进程组清理；Job Object 仅管理进程生命周期，不隔离文件和网络。POSIX 分支尚未在本轮实机验证。
 - LLM 客户端与 Agent Loop 已通过真实供应商 Demo 验收；固定 Calculator Bug 在 Prompt 调优后连续 3/3 成功，具体指标不应外推为任意任务成功率。
-- Context 同时限制字符和估算 token，计入工具 Schema，按完整轮次保留最近记录；只裁剪模型侧 ToolResult，自动摘要仍不实现。
+- Context 同时限制字符和估算 token，计入工具 Schema，按完整轮次保留当前 Task 与最近 TaskRecap；只裁剪模型侧 ToolResult，历史回顾是确定性事实而非模型自动摘要。
 - StopController 已执行决策轮上限、重复纠偏/停止、连续命令超时、连续工具基础设施错误与 Agent 级可恢复 LLM 错误阈值；页面仍没有用户任务取消入口。
 - Runtime 发布 `tool_started`、`tool_finished`、`file_changed`、`command_finished`；事件 payload 与每任务历史均有上限，过期重连游标返回 410。前端以专用卡片展示并逐类校验 payload。
+- TraceRecorder 在事件发布成功后实时保存有界执行事实；终态 TaskSummary 不依赖 EventLog 回读，并覆盖完成、失败与服务关闭。
 - 服务关闭会等待已开始的原子文件写入落定，并等待命令进程树清理；取消不会回滚已经提交的文件修改，任务以 `SERVER_SHUTDOWN` 明确结束。
 - 本机 Host/Origin 限制不是身份认证，不能作为对公网或多用户部署的安全保障。
 - 项目文件和命令输出将来要作为不可信数据处理；实际日志脱敏管道待实现。
 
 ## 项目文档
 
-- [M4 Demo 与可靠性完成说明](docs/Coding%20Agent%20M4%20Demo%20与%20可靠性完成说明.md)：真实 Bug、Prompt 调优、三轮真实模型指标和独立复验。
+- [M6 历史任务与多轮对话实施计划](docs/Coding%20Agent%20M6%20历史任务与多轮对话实施计划.md)：项目内版本化 JSON 历史、原子写、重启收敛、Session/follow-up、有界 TaskRecap 与隐私删除。
+- [M5 UX 重构实施计划](docs/Coding%20Agent%20M5%20UX%20重构实施计划.md)：可组合 TaskRun、确定性 Activity/Trace/Summary 与 M6 前向兼容接口。
+- [M5 UX 重构完成说明](docs/Coding%20Agent%20M5%20UX%20重构完成说明.md)：实际实现、前后端/browser 验证、真实模型复验和剩余边界。
+- [M7 最终交付计划](docs/Coding%20Agent%20M7%20最终交付计划.md)：候选冻结、全量复验、README.txt、录屏、安全扫描和最终 Go/No-Go。
+- [M4 Demo 与可靠性完成说明](docs/Coding%20Agent%20M4%20Demo%20与可靠性完成说明.md)：真实 Bug、Prompt 调优、三轮真实模型指标和独立复验。
 - [M3 API 与 UI 完成说明](docs/Coding%20Agent%20M3%20API%20与%20UI%20完成说明.md)：专用事件卡片、严格响应校验、SSE/整页恢复与终态一致性。
 - [M2 上下文预算与 Agent Loop 说明](docs/Coding%20Agent%20M2%20上下文预算与%20Agent%20Loop%20说明.md)：双总预算、结果裁剪、调用 ID 回填、真实事件、有界恢复、关闭语义和 Fake LLM 闭环。
 - [M2 LLM HTTP 适配说明](docs/Coding%20Agent%20M2%20LLM%20HTTP%20适配说明.md)：请求/响应契约、工具 Schema 复用、重试矩阵、安全错误与资源关闭。
@@ -327,4 +354,4 @@ docs/           # 设计、实施计划与修改说明
 - [实施计划](docs/Coding%20Agent%20实施计划.md)
 - [基础框架修改说明](docs/Coding%20Agent%20基础框架修改说明.md)
 
-`README.txt`、视频与提交压缩包属于 M5，当前没有生成正式提交材料；真实 Bug Demo 与三轮可靠性验收已完成。
+`README.txt`、视频与提交压缩包属于 M7，当前没有生成正式提交材料；M5 可组合 TaskRun UX 已完成，M6 历史任务持久化与多轮会话仍是计划而非已有能力。

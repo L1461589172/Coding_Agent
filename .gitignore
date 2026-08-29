@@ -19,4 +19,5 @@ tmp/
 output/
 test-results/
 playwright-report/
+/.coding-agent/
 /.env.example

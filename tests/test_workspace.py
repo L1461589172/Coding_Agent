@@ -14,6 +14,8 @@ from app.tools.workspace import Workspace, WorkspaceError
         "C:secret.txt",
         "\\\\server\\share",
         ".git/config",
+        ".coding-agent/history/CURRENT",
+        ".CoDiNg-AgEnT/history/index.json",
         ".env",
         ".env.local",
         "a/PRIVATE.KEY",

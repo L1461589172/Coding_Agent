@@ -108,8 +108,8 @@ def test_runtime_publishes_tool_file_and_command_events(tmp_path):
 
     async def scenario():
         manager = TaskManager(runtime, mode="agent")
-        task = manager.create("Create and verify a file")
-        events = decoded_events([chunk async for chunk in manager.logs[task.id].stream()])
+        task = await manager.create("Create and verify a file")
+        events = decoded_events([chunk async for chunk in manager.get_log(task.id).stream()])
         types = [event["type"] for event in events]
         assert types.count("tool_started") == 2
         assert types.count("tool_finished") == 2
@@ -138,7 +138,7 @@ def test_runtime_publishes_tool_file_and_command_events(tmp_path):
     asyncio.run(scenario())
 
 
-def test_api_reports_expired_event_cursor(tmp_path):
+def test_api_reports_expired_event_cursor(tmp_path, history_dir):
     class NoisyRunner:
         async def run(self, task, events):
             for number in range(5):
@@ -148,6 +148,7 @@ def test_api_reports_expired_event_cursor(tmp_path):
     app = create_app(
         Settings(
             workspace=tmp_path,
+            history_dir=history_dir,
             event_max_payload_characters=256,
             event_max_history_characters=4_000,
             event_max_history_events=3,
@@ -156,6 +157,12 @@ def test_api_reports_expired_event_cursor(tmp_path):
     )
     with TestClient(app, base_url="http://127.0.0.1:8000") as client:
         task = client.post("/api/tasks", json={"prompt": "emit events"}).json()
+        for _ in range(100):
+            if client.get(f"/api/tasks/{task['id']}").json()["status"] == "COMPLETED":
+                break
+            threading.Event().wait(0.01)
+        else:
+            raise AssertionError("task did not reach a terminal state")
         initial = client.get(f"/api/tasks/{task['id']}/events")
         assert initial.status_code == 200
         assert initial.text.count("data: ") == 3
@@ -178,8 +185,8 @@ def test_retryable_llm_errors_recover_then_reset(tmp_path):
 
     async def scenario():
         manager = TaskManager(runtime, mode="agent")
-        task = manager.create("Recover")
-        events = decoded_events([chunk async for chunk in manager.logs[task.id].stream()])
+        task = await manager.create("Recover")
+        events = decoded_events([chunk async for chunk in manager.get_log(task.id).stream()])
         assert manager.get(task.id).status == "COMPLETED"
         assert len(fake.calls) == 3
         recovery = [event for event in events if event["payload"].get("mode") == "recovery"]
@@ -202,8 +209,8 @@ def test_consecutive_llm_errors_stop_at_agent_threshold(tmp_path):
 
     async def scenario():
         manager = TaskManager(runtime, mode="agent")
-        task = manager.create("Stop after bounded retries")
-        _ = [chunk async for chunk in manager.logs[task.id].stream()]
+        task = await manager.create("Stop after bounded retries")
+        _ = [chunk async for chunk in manager.get_log(task.id).stream()]
         assert manager.get(task.id).error.code == "CONSECUTIVE_LLM_ERRORS"
         assert len(fake.calls) == 2
         await manager.close()
@@ -232,8 +239,8 @@ def test_consecutive_timeout_and_runtime_error_thresholds(tmp_path):
             max_consecutive_runtime_errors=2,
         )
         manager = TaskManager(runtime, mode="agent")
-        task = manager.create("Reach the failure threshold")
-        _ = [chunk async for chunk in manager.logs[task.id].stream()]
+        task = await manager.create("Reach the failure threshold")
+        _ = [chunk async for chunk in manager.get_log(task.id).stream()]
         assert manager.get(task.id).error.code == expected
         assert len(fake.calls) == 2
         await manager.close()
@@ -264,7 +271,7 @@ def test_shutdown_waits_for_inflight_atomic_file_write(tmp_path, monkeypatch):
 
     async def scenario():
         manager = TaskManager(runtime, mode="agent")
-        task = manager.create("Write during shutdown")
+        task = await manager.create("Write during shutdown")
         assert await asyncio.to_thread(entered.wait, 2)
         closing = asyncio.create_task(manager.close())
         await asyncio.sleep(0.05)
@@ -275,7 +282,7 @@ def test_shutdown_waits_for_inflight_atomic_file_write(tmp_path, monkeypatch):
         finished = manager.get(task.id)
         assert finished.error.code == "SERVER_SHUTDOWN"
         assert (tmp_path / "settled.txt").read_text(encoding="utf-8") == "committed\n"
-        events = decoded_events([chunk async for chunk in manager.logs[task.id].stream()])
+        events = decoded_events([chunk async for chunk in manager.get_log(task.id).stream()])
         cancelled = [
             event
             for event in events
@@ -301,7 +308,7 @@ def test_shutdown_waits_for_command_process_cleanup(tmp_path):
 
     async def scenario():
         manager = TaskManager(runtime, mode="agent")
-        task = manager.create("Run until shutdown")
+        task = await manager.create("Run until shutdown")
         for _attempt in range(250):
             if (tmp_path / "command.pid").exists():
                 break
@@ -316,7 +323,7 @@ def test_shutdown_waits_for_command_process_cleanup(tmp_path):
                 break
             await asyncio.sleep(0.02)
         assert not process_running(pid)
-        events = decoded_events([chunk async for chunk in manager.logs[task.id].stream()])
+        events = decoded_events([chunk async for chunk in manager.get_log(task.id).stream()])
         assert any(
             event["type"] == "tool_finished" and event["payload"].get("cancelled")
             for event in events

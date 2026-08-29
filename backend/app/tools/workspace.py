@@ -33,6 +33,7 @@ class Workspace:
         ".pytest_cache",
         ".ruff_cache",
         ".cache",
+        ".coding-agent",
         ".idea",
         "dist",
         "build",

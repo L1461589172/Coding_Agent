@@ -99,10 +99,22 @@ def _truncate_tool_content(content: str, limit: int) -> str:
 class Conversation:
     """Keep complete rounds so context selection cannot orphan a tool result."""
 
-    def __init__(self, system: str, prompt: str, budget: ContextBudget | None = None) -> None:
-        self.base = [{"role": "system", "content": system}, {"role": "user", "content": prompt}]
+    def __init__(
+        self,
+        system: str,
+        prompt: str,
+        budget: ContextBudget | None = None,
+        *,
+        history_rounds: list[list[dict[str, Any]]] | None = None,
+    ) -> None:
+        self.system = {"role": "system", "content": system}
+        self.prompt = {"role": "user", "content": prompt}
+        self.base = [self.system, self.prompt]
+        self.history_rounds = deepcopy(history_rounds or [])
         self.rounds: list[list[dict[str, Any]]] = []
         self.budget = budget or ContextBudget()
+        self.included_history_tasks = 0
+        self.omitted_history_tasks = len(self.history_rounds)
 
     def append_round(self, messages: list[dict[str, Any]]) -> None:
         if not messages or messages[0].get("role") != "assistant":
@@ -143,7 +155,29 @@ class Conversation:
                     raise ContextBudgetError("Latest complete round exceeds the context budget")
                 break
             selected.insert(0, fitted)
-        return base + [message for conversation_round in selected for message in conversation_round]
+        current = [message for conversation_round in selected for message in conversation_round]
+        history: list[list[dict[str, Any]]] = []
+        for historical_round in reversed(self.history_rounds):
+            candidate = [
+                deepcopy(self.system),
+                *[message for item in [deepcopy(historical_round), *history] for message in item],
+                deepcopy(self.prompt),
+                *current,
+            ]
+            if not _fits(candidate, policy, tools):
+                break
+            history.insert(0, deepcopy(historical_round))
+        self.included_history_tasks = len(history)
+        self.omitted_history_tasks = len(self.history_rounds) - len(history)
+        result = [
+            deepcopy(self.system),
+            *[message for item in history for message in item],
+            deepcopy(self.prompt),
+            *current,
+        ]
+        if not _fits(result, policy, tools):
+            raise ContextBudgetError("Final model input exceeds the context budget")
+        return result
 
     def _fit_round(
         self,
