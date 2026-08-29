@@ -16,9 +16,26 @@ from app.tools.base import ToolArgs, ToolResult, ToolSpec
 from app.tools.command_policy import CommandError, child_environment, prepare_command
 from app.tools.workspace import Workspace
 
+RUN_COMMAND_GUIDANCE = (
+    "Run one allowlisted command as argv, without shell syntax. Allowed forms: pytest ...; "
+    "python/python3 -m pytest|unittest|compileall ...; python/python3 <workspace.py> ...; "
+    "node <workspace.js|.cjs|.mjs> ...; npm test; npm run <script>; echo ...; and version "
+    "checks. Do not use python -c, node -e, py_compile, pip/npm install, npx, shell wrappers, "
+    "operators, or expansions. For functional checks use pytest; for syntax use "
+    "python -m compileall; for other Python checks use a workspace .py script. After "
+    "COMMAND_NOT_ALLOWED, choose one of these forms instead of guessing another variant."
+)
+
 
 class RunCommandArgs(ToolArgs):
-    command: str = Field(min_length=1, max_length=4000)
+    command: str = Field(
+        min_length=1,
+        max_length=4000,
+        description=(
+            "One command in the documented allowlist; no shell syntax. Prefer pytest, "
+            "python -m compileall, or a workspace script."
+        ),
+    )
     timeout_seconds: int = Field(default=30, ge=1, le=120)
 
 
@@ -235,7 +252,7 @@ class CommandTool:
 def shell_spec(workspace: Workspace, limits: CommandLimits) -> ToolSpec:
     return ToolSpec(
         "run_command",
-        "Run an allowlisted local development command; no shell syntax",
+        RUN_COMMAND_GUIDANCE,
         RunCommandArgs,
         CommandTool(workspace, limits).run_command,
         implemented=True,

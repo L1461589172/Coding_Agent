@@ -2,6 +2,7 @@ import asyncio
 
 import pytest
 from app.agent.context import Conversation
+from app.agent.runtime import SYSTEM_PROMPT
 from app.agent.stop import StopController
 from app.core.config import Settings
 from app.tools.base import ToolResult
@@ -159,3 +160,26 @@ def test_tool_registry_validation_and_execution(tmp_path):
         assert set(registry.availability().values()) == {"ready"}
 
     asyncio.run(scenario())
+
+
+def test_run_command_schema_and_system_prompt_explain_allowed_alternatives(tmp_path):
+    schemas = create_registry(Workspace(tmp_path)).schemas()
+    run_command = next(
+        schema["function"] for schema in schemas if schema["function"]["name"] == "run_command"
+    )
+    guidance = (
+        run_command["description"]
+        + " "
+        + run_command["parameters"]["properties"]["command"]["description"]
+    ).casefold()
+    prompt = SYSTEM_PROMPT.casefold()
+    for expected in (
+        "pytest",
+        "compileall",
+        "workspace",
+        "python -c",
+        "py_compile",
+        "command_not_allowed",
+    ):
+        assert expected in guidance
+        assert expected in prompt
