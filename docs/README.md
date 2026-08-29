@@ -1,6 +1,6 @@
 # 文档导航与当前代码状态
 
-更新日期：2026-08-28。M4 Demo 与可靠性已收口：真实模型在固定 Bug Demo 上连续 3/3 成功，Agent pytest 与独立复验均通过；M1–M3 能力继续保持。
+更新日期：2026-08-29。M4 Demo 与可靠性已收口；M5 已修订为可组合 TaskRun UX；M6 历史任务与多轮会话计划已制定；M5/M6 均尚未实施，最终交付为 M7。
 
 ## 阅读顺序
 
@@ -12,7 +12,10 @@
 | [M2 LLM HTTP 适配说明](Coding%20Agent%20M2%20LLM%20HTTP%20适配说明.md) | 当前模型请求、响应校验、超时/重试、错误与资源关闭契约 |
 | [M2 上下文预算与 Agent Loop 说明](Coding%20Agent%20M2%20上下文预算与%20Agent%20Loop%20说明.md) | 总预算、模型侧结果裁剪、调用 ID 回填、停止规则和应用组装 |
 | [M3 API 与 UI 完成说明](Coding%20Agent%20M3%20API%20与%20UI%20完成说明.md) | Tool/Shell/File Change 卡片、运行时契约校验、SSE 与整页恢复、终态一致性 |
-| [M4 Demo 与可靠性完成说明](Coding%20Agent%20M4%20Demo%20与%20可靠性完成说明.md) | 真实 Bug 样例、Prompt 调优、三轮真实模型指标、双重 pytest 验收 |
+| [M4 Demo 与可靠性完成说明](Coding%20Agent%20M4%20Demo%20与可靠性完成说明.md) | 真实 Bug 样例、Prompt 调优、三轮真实模型指标、双重 pytest 验收 |
+| [M5 UX 重构实施计划](Coding%20Agent%20M5%20UX%20重构实施计划.md) | 可组合 TaskRun、Activity 聚合、Trace/Summary、无障碍和 M6 前向兼容接口 |
+| [M6 历史任务与多轮对话实施计划](Coding%20Agent%20M6%20历史任务与多轮对话实施计划.md) | SQLite 持久化、重启收敛、Session/follow-up API、有界历史上下文、隐私与测试矩阵 |
+| [M7 最终交付计划](Coding%20Agent%20M7%20最终交付计划.md) | 候选冻结、全量复验、README.txt、录屏、敏感信息扫描、材料与 Go/No-Go |
 | [D001 修复说明](Coding%20Agent%20D001%20修复说明.md) | 命令级字节码缓存策略、确定性回归、重复运行记录与三类缓存/权限问题区分 |
 | [M1 只读工具实现说明](Coding%20Agent%20M1%20只读工具实现说明.md) | 当前只读工具参考；首次实现清单和 104 项测试属于历史阶段 |
 | [基础框架修改说明](Coding%20Agent%20基础框架修改说明.md) | M0 历史记录；当时的“工具未实现”和 35 项测试不代表当前状态 |
@@ -28,7 +31,9 @@
 | M2 Runtime | HTTP 客户端；双总预算与结果裁剪；Agent Loop/ID 回填；真实工具事件及历史限制；有界恢复；关闭中写入/命令清理 | 已完成并通过 M4 真实供应商验收 |
 | M3 API/UI | 创建/查询、严格响应校验、专用 Tool/Shell/File Change 卡片、有界重连、整页恢复与终态核对 | 已完成；跨进程持久化不在范围内 |
 | M4 Demo | 初始失败的真实 Bug、可重复验收器、Prompt 调优；真实模型连续 3/3 成功 | 已完成；不外推为任意任务 100% 成功率 |
-| M5 交付 | 开发说明与测试基础 | README.txt、视频、密钥扫描与最终提交材料 |
+| M5 UX | 已审查的 ConversationThread 壳层、可组合 TaskRun、Activity/Trace/Summary、响应式与无障碍计划 | 待实施；P1 不得挤压 M6 |
+| M6 历史/多轮 | 已完成完整架构与实施计划 | 待实现 SQLite 历史、重启收敛、Session/follow-up、历史预算、删除与 UI |
+| M7 交付 | 开发说明与测试基础 | 待 M5/M6 完成后制作 README.txt、视频、密钥扫描与最终提交材料 |
 
 `/api/meta` 的六个 `tool_statuses` 均为 `ready`。模型三项配置完整时为 `agent_ready=true`、`mode=agent` 并运行真实 Loop；配置不完整时为 scaffold，任务以 `NOT_IMPLEMENTED` 结束且不执行工具。仍没有独立 HTTP 工具执行入口。
 

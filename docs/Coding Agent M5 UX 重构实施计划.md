@@ -1,1248 +1,383 @@
-# Coding Agent M5 UX 重构实施计划
+# Coding Agent M5 UX 重构实施计划（修订版）
 
-> 阶段名称：M5 - Codex 风格前端体验、自然语言执行轨迹与任务总结  
-> 目标：在不破坏现有 Agent Runtime、工具系统和 M4 真实模型闭环的前提下，将当前偏工程调试风格的前端重构为更接近 Codex 的任务交互界面，并将工具调用结果从原始结构化 JSON 转换为自然语言执行过程，最终为每次任务生成可信、完整的任务总结。
+> 阶段名称：M5 — 可组合任务运行 UX、确定性执行轨迹与任务总结
+>
+> 建议周期：2026-08-29 至 2026-08-31
+>
+> 前置条件：M1–M4 已完成；M4 固定 Demo 最近一次真实模型验收为 3/3
+>
+> 目标：不改变 LLM、Tool Schema、StopController 和工具执行语义，把结构化执行事实组织成易读、可恢复、可验证的单次任务运行（TaskRun），并为 M6 的历史任务与多轮会话保留稳定组合接口。
 
----
+## 0. 审查结论与本次修订
 
-# 1. 背景
+原计划的方向正确：保留结构化事件、使用确定性 Formatter、按 `call_id` 合并工具生命周期、从 Runtime 事实生成 Summary，并在完成后重跑 M4。
 
-当前 Coding Agent 已经完成核心执行能力：
+但以下内容若不调整会造成返工或错误承诺，本版已经修正：
 
-- M0：项目基础框架；
-- M1：六个本地工具；
-- M2：Agent Runtime；
-- M3：Task API、SSE 与前端 Timeline；
-- M4：真实模型 Demo、红测到绿测闭环及连续三次成功验证。
+1. **里程碑冲突**：M5 保留为 UX 重构；历史任务与多轮会话统一为 M6；最终交付统一顺延为 M7。
+2. **“Codex 风格”不可验收**：不以品牌相似度或像素复制为目标，改为可衡量的任务线程、信息层级、响应式和无障碍标准。
+3. **ASCII 草图不是视觉目标**：实施前必须截取当前关键状态，并形成一份被接受的桌面/窄屏视觉基线；未完成前不进入大规模 CSS 重构。
+4. **当前不是多轮会话，但 M5 不能封死 M6**：每次提交仍创建新的 Task。M5 不展示尚不存在的“继续对话”，但把单个 Task 视为可组合的 `TaskRun`，避免 M6 重写 Thread reducer、Composer 和 Summary。
+5. **Workspace API 不暴露绝对路径**：Sidebar 继续显示安全的工作区名称，不新增绝对路径泄露。
+6. **Tool/File/Command 不能重复成为三条主活动**：同一 `call_id` 必须形成一个 Activity，文件 Diff 或命令输出作为该 Activity 的附件。
+7. **ExecutionTrace 不能只在成功返回时存在**：Trace 必须由 Task 生命周期拥有，确保失败、取消和服务关闭也能生成 partial summary。
+8. **不能扫描有界 EventLog 生成 Summary**：采用实时 Trace Recorder，在同一发布路径中消费原始结构化事实；不在 Runtime 里维护第二套易漂移的手工统计。
+9. **`tests_passed` 判定原文有歧义**：第一版仅识别明确的 pytest 命令，并以“最后一次识别出的 pytest 命令”的退出状态为准。
+10. **前端单测没有基础设施**：当前只有 typecheck/build；若 Formatter/Reducer 测试列为验收项，必须明确引入 Vitest，组件测试再引入 Vue Test Utils 和 jsdom。
+11. **Browser smoke 依赖未固定**：如果它是退出标准，必须把 Playwright 测试依赖和脚本纳入 lockfile，而不是依赖开发机偶然安装。
+12. **缺少无障碍与长任务行为**：本版把键盘、焦点、live region、对比度、reduced motion、自动滚动和大事件序列列为 P0。
+13. **选中内容与运行状态不能是同一个状态**：M5 先把“当前展示的 TaskRun”和“全局正在运行的 Task”概念分离；M6 才能在后台任务运行时安全浏览历史会话。
 
-当前系统已经能够完成：
+## 1. 范围与非目标
 
-```text
-用户输入任务
-    ↓
-Agent Runtime
-    ↓
-LLM 决策
-    ↓
-Tool Call
-    ↓
-文件读取 / 搜索 / 修改 / 命令执行
-    ↓
-Tool Result
-    ↓
-继续模型决策
-    ↓
-真实 pytest 验证
-    ↓
-最终结果
-```
+### 1.1 P0 交付
 
-但是当前前端主要围绕“事件调试”设计。
+- Sidebar + ConversationThread 壳层 + 单个 TaskRun + Composer 的页面结构；M5 的 `runs` 长度固定为 0 或 1；
+- 用户 Prompt、非空 Agent 消息、Recovery、工具活动和终态 Summary 的统一时间流；
+- 六种工具的确定性自然语言 Formatter；
+- `tool_started`、`tool_finished` 及同 `call_id` 的 `file_changed` / `command_finished` 聚合；
+- 真实 Diff、命令结果、截断/超时/清理状态；
+- 完整任务 ExecutionTrace 与成功/失败 Summary；
+- 刷新恢复、410 历史过期、404 服务重启和终态一致性回归；
+- 桌面/窄屏、键盘和基本无障碍验收；
+- M4 真实模型 Demo 重新连续 3/3。
 
-存在以下问题：
+### 1.2 P1（时间允许）
 
-1. 页面整体仍偏工程控制台，而不是 Coding Agent 产品；
-2. `tool_started`、`tool_finished`、`file_changed`、`command_finished` 等事件展示过于技术化；
-3. 工具调用结果中存在较多 JSON 风格内容，不利于普通用户阅读；
-4. 同一次工具调用可能拆成多个事件卡片，信息密度过高；
-5. Agent 对话与执行行为之间缺少统一的任务流体验；
-6. 最终结果主要依赖模型最终回复，没有系统化总结整个任务过程；
-7. 用户难以快速回答以下问题：
-   - Agent 看了哪些文件？
-   - Agent 修改了哪些文件？
-   - Agent 执行了哪些命令？
-   - 测试是否真的通过？
-   - 任务经过了多少步骤？
-   - 是否发生过失败和恢复？
+- Raw Event 调试抽屉；
+- 温和的状态动画和自动滚动；
+- 更细致的 Diff 行统计；
+- 活动耗时和聚合统计的视觉优化。
 
-因此 M5 的重点不是继续增强 Agent 的底层能力，而是将现有执行能力重新组织成更清晰、更接近 Codex 的交互体验。
+### 1.3 明确不做
 
----
+- 多轮 Conversation UI、任务历史列表和数据库持久化；这些属于 M6；
+- 用户取消 API；
+- Monaco、内置 Terminal、IDE 文件树、多 Repo、多 Workspace；
+- Git 历史、Git 工具、多用户、多 Agent、插件系统；
+- 逐像素复制 Codex 或使用其品牌资产。
 
-# 2. M5 总体目标
+M5 虽不实现 M6 功能，但不得把“整个会话”等同于单个 Task，也不得让 Sidebar、Composer 或恢复逻辑直接拥有网络请求。第 5 节定义的兼容接口属于 M5 P0。
 
-本阶段包含三个核心目标。
+## 2. 产品与交互约束
 
-## 2.1 Codex 风格页面重构
+### 2.1 单次 TaskRun 模型
 
-将当前：
+当前 API 是“一次 Prompt 创建一个 Task”。页面必须遵守：
 
-```text
-Workspace Panel
-+
-Task Status
-+
-Event Timeline
-+
-Tool JSON
-+
-Final Result
-```
+- 运行中 Composer 禁用，不能重复提交；
+- `New Task` 在运行中禁用，它不是取消按钮；
+- 完成/失败后可以开始一个新 Task；
+- 新 Task 会替换当前页面展示和版本化 recent-context 中的最近 Task 引用，但不删除后端内存中的旧 Task；
+- 文案使用“开始新任务”，不使用“继续对话”或暗示共享上下文的措辞。
 
-重构为：
+这里的“替换展示”只是 M5 产品行为，不是组件数据结构约束。`ConversationThread` 接收 `TaskRunViewModel[]`；M5 只传入一个 run，M6 再传入同一会话的多个 run。
 
-```text
-Sidebar
-+
-Task Thread
-+
-Agent Message
-+
-Natural Language Activity
-+
-File Diff
-+
-Command Result
-+
-Task Summary
-+
-Bottom Composer
-```
+### 2.2 Workspace 与安全
 
-最终页面重点从：
+- Sidebar 只展示 `/api/meta.workspace` 返回的名称；
+- 不新增绝对路径、API Key、Base URL 或供应商原始响应 JSON 展示；Agent 的受限消息仍按 Thread 契约显示；
+- 文件、模型和命令文本继续按不可信内容处理；禁止 `v-html`；
+- Raw Event 默认折叠，并继续受后端事件载荷上限约束。
 
-> “后端发生了哪些事件”
+### 2.3 事实层级
 
-转变为：
+1. Task 状态、Trace、ToolResult、FileChange、CommandResult 是执行事实；
+2. 模型最终回复是 Agent Narrative；
+3. Formatter 只翻译已有事实，不推断缺失事实；
+4. Narrative 与事实冲突时，UI 明确分区并以事实为准。
 
-> “Agent 正在怎样完成这个任务”。
+## 3. Phase 0：基线与视觉目标
 
----
+在改页面前，先用同一浏览器、同一 viewport 捕获并检查当前页面：
 
-## 2.2 工具结果自然语言化
+1. Idle / scaffold 或 agent-ready；
+2. Running，至少包含一个进行中的工具调用；
+3. Completed，包含 File Diff、pytest 命令和最终结果；
+4. Failed / recovery；
+5. 390px 窄屏关键状态。
 
-后端仍然保留结构化 JSON Event。
+根据证据形成桌面和窄屏视觉目标，至少确定：
 
-前端增加独立 Formatter 层：
+- Thread 最大宽度、Sidebar 宽度和 Composer 位置；
+- 消息、活动、Diff、Command、Summary 的层级；
+- running/success/error/warning 的颜色和非颜色提示；
+- focus、hover、展开、长文本、空内容和截断状态。
 
-```text
-Structured Event
-      ↓
-Formatter
-      ↓
-Human-readable Activity
-```
+ASCII 图只表达信息架构，不能替代视觉目标。Phase 0 未通过，不开始全局样式重写。
 
-例如：
+## 4. 页面信息架构
 
-```text
-read_file
-```
+### 4.1 Sidebar
 
-不再默认展示：
+展示：
 
-```json
-{
-  "tool": "read_file",
-  "arguments": {
-    "path": "calculator.py"
-  }
-}
-```
+- Coding Agent；
+- Workspace 名称；
+- Agent Ready / 未配置状态；
+- `开始新任务`。
 
-而展示：
+六工具清单不再常驻主导航。需要保留时放入 P1 的 Runtime Details，并默认折叠。
 
-```text
-✓ 阅读了 calculator.py
-```
+Sidebar 在 M5 只渲染上述内容，但组件输入预留 `historyItems`、`selectedId`、`onSelect` 和加载/空状态；M5 传入空列表且不显示伪历史。这样 M6 只增加数据源和历史分组，不重写 Sidebar 框架。
 
----
+### 4.2 ConversationThread 与 TaskRunSection
 
-## 2.3 任务结束后生成完整总结
+主区域由 `ConversationThread` 壳层和一个 `TaskRunSection` 组成。单个 TaskRun 按用户理解组织为：
 
-任务完成后增加 Task Summary。
+- User Message：来自 `Task.prompt`，时间使用 `Task.created_at`；
+- Agent Message：只展示非空 `assistant_message.payload.message`；
+- Recovery：独立 warning，不伪装成模型推理；
+- Tool Activity：按 `call_id` 聚合的单条活动；
+- Terminal Summary：来自 Task API 的终态和 Summary。
 
-总结必须同时包含：
+页面不能生成模型没有说过的“为什么”。没有 Agent 文本时直接展示确定性活动，不补写推理过程。
 
-```text
-模型总结
-+
-真实执行事实
-```
+`TaskRunSection` 必须有以 `task_id` 为根的稳定 key 和清楚的运行边界；M6 将多个 TaskRun 按会话内序号追加时，已有 Activity 不得重新挂载或跳动。
 
-例如：
+### 4.3 Composer
 
-```text
-任务完成
+- Idle：可创建 Task；
+- Pending/Running：禁用，并说明正在处理；
+- Completed/Failed：允许“开始新任务”；
+- 保留 8000 字符限制、去空白和防重复提交；
+- 窄屏下不遮挡 Summary 或系统提示。
 
-修复了 divide 在除数为 0 时抛出异常的问题。
-
-修改
-• calculator.py
-
-验证
-• python -m pytest -q
-• 2 passed
-
-执行统计
-• 阅读 2 个文件
-• 修改 1 个文件
-• 执行 1 条命令
-• 5 个 Agent 决策步骤
-• 5 次工具调用
-```
-
-其中执行事实必须来源于 Runtime，而不能完全依赖模型自行描述。
-
----
-
-# 3. 设计原则
-
-M5 必须遵循以下原则。
-
-## 3.1 后端保存结构，前端负责人类表达
-
-不得为了页面显示方便，将后端 Event 改成纯自然语言。
-
-仍保持：
-
-```text
-Backend
-    ↓
-Structured Event
-    ↓
-Frontend Formatter
-    ↓
-Natural Language
-```
-
-原因：
-
-- 方便测试；
-- 保留机器可读性；
-- 支持未来不同 UI；
-- 支持 Debug；
-- 避免逻辑散落到 Runtime 文本中。
-
----
-
-## 3.2 不让 LLM 二次翻译 Tool Result
-
-自然语言 Tool Activity 应优先采用确定性程序转换：
+Composer 只负责输入与发出意图，不直接调用 `POST /api/tasks`：
 
 ```typescript
-formatToolActivity(event)
+type ComposerIntent =
+  | { kind: 'new_task'; prompt: string }
+  // M6 增加：{ kind: 'follow_up'; sessionId: string; prompt: string }
 ```
 
-而不是：
+M5 只能产生 `new_task`。这既避免虚假多轮承诺，也使 M6 可以在不改输入组件的情况下接入 follow-up API。
 
-```text
-Tool Result
-    ↓
-再次请求 LLM
-    ↓
-自然语言
-```
+## 5. Thread View Model
 
-避免：
-
-- 增加 API 成本；
-- 增加延迟；
-- 引入幻觉；
-- 将真实结果错误总结。
-
----
-
-## 3.3 UI 展示事实优先
-
-例如测试结果：
-
-```text
-2 passed
-```
-
-必须来自：
-
-```text
-command_finished.stdout
-exit_code
-ok
-```
-
-不能只显示模型说：
-
-> 测试已经通过。
-
----
-
-## 3.4 Runtime 是事实来源
-
-继续遵循项目原有原则：
-
-> LLM 是不可信决策者，Runtime 是可信控制器，Tools 是受约束执行器。
-
-M5 增加：
-
-> UI 是 Runtime 事实的人类可读投影，而不是新的事实来源。
-
----
-
-## 3.5 不破坏 M4 闭环
-
-任何 UX 修改都不能破坏：
-
-```text
-真实模型
-→ Tool Calling
-→ 文件修改
-→ pytest
-→ task_completed
-```
-
-M5 完成后必须重新执行 M4 Demo。
-
----
-
-# 4. 最终页面目标
-
-建议最终页面布局：
-
-```text
-┌──────────────────┬──────────────────────────────────────────────┐
-│ Coding Agent     │                                              │
-│                  │  当前任务                                    │
-│ Workspace        │                                              │
-│ MyProject        │  你                                          │
-│                  │  修复当前项目中失败的测试。                  │
-│ ● Agent Ready    │                                              │
-│                  │  Agent                                       │
-│ + New Task       │  我先检查项目结构和相关测试。                │
-│                  │                                              │
-│                  │  ✓ 查看了项目目录                            │
-│                  │  ✓ 阅读了 calculator.py                      │
-│                  │  ✓ 阅读了 test_calculator.py                 │
-│                  │                                              │
-│                  │  Agent                                       │
-│                  │  问题出在除零处理。                          │
-│                  │                                              │
-│                  │  ✓ 修改了 calculator.py                      │
-│                  │                                              │
-│                  │    Diff                                      │
-│                  │    + if divisor == 0:                        │
-│                  │    +     return None                          │
-│                  │                                              │
-│                  │  ✓ 运行测试                                  │
-│                  │    python -m pytest -q                       │
-│                  │    2 passed                                  │
-│                  │                                              │
-│                  │  ───────── Task completed ─────────           │
-│                  │                                              │
-│                  │  修复了 divide 的除零问题。                  │
-│                  │                                              │
-│                  │  Changes                                     │
-│                  │  • calculator.py                             │
-│                  │                                              │
-│                  │  Verification                                │
-│                  │  • python -m pytest -q                       │
-│                  │  • 2 passed                                  │
-│                  │                                              │
-│                  │  [继续输入任务...........................]   │
-└──────────────────┴──────────────────────────────────────────────┘
-```
-
----
-
-# 5. 页面信息架构
-
-页面分为以下区域。
-
----
-
-## 5.1 Sidebar
-
-功能：
-
-```text
-项目名称
-Workspace 路径
-Agent Ready 状态
-New Task
-```
-
-建议显示：
-
-```text
-Coding Agent
-
-Workspace
-Coding_Agent_TestWorkspace
-
-● Agent Ready
-
-+ New Task
-```
-
-当前六工具列表：
-
-```text
-list_files
-read_file
-search_text
-write_file
-replace_in_file
-run_command
-```
-
-不再长期占据主 Sidebar。
-
-可：
-
-- 完全隐藏；
-- 或放入一个可展开的 Debug / Runtime Details 区域。
-
----
-
-## 5.2 Task Thread
-
-Task Thread 是页面主体。
-
-内容类型包括：
-
-```text
-User Message
-Agent Message
-Activity
-File Change
-Command
-Recovery / Warning
-Task Summary
-```
-
-所有内容按时间顺序排列。
-
----
-
-## 5.3 Composer
-
-输入区域固定在任务流底部附近。
-
-包含：
-
-```text
-textarea
-Send / Start Task
-```
-
-状态根据任务：
-
-```text
-Idle
-Working
-Completed
-Failed
-```
-
-控制是否可以继续提交。
-
----
-
-# 6. 前端组件重构
-
-当前组件逐步调整。
-
-建议目录：
-
-```text
-frontend/src/
-├── App.vue
-├── types.ts
-│
-├── api/
-│   └── client.ts
-│
-├── components/
-│   ├── Sidebar.vue
-│   ├── TaskThread.vue
-│   ├── TaskComposer.vue
-│   │
-│   ├── UserMessage.vue
-│   ├── AgentMessage.vue
-│   │
-│   ├── ActivityItem.vue
-│   ├── FileChangeItem.vue
-│   ├── CommandItem.vue
-│   ├── RecoveryItem.vue
-│   │
-│   └── TaskSummary.vue
-│
-└── formatters/
-    ├── toolActivity.ts
-    ├── commandActivity.ts
-    ├── fileActivity.ts
-    └── taskSummary.ts
-```
-
----
-
-# 7. Task Thread 数据组织
-
-当前前端直接按 Event 渲染：
-
-```text
-event
-event
-event
-event
-```
-
-M5 应增加一层 UI View Model。
-
-例如：
+前端不再由组件直接解释原始事件。新增纯函数层：
 
 ```typescript
 type ThreadItem =
   | UserThreadItem
   | AgentThreadItem
   | ToolActivityThreadItem
-  | FileChangeThreadItem
-  | CommandThreadItem
   | RecoveryThreadItem
-  | SummaryThreadItem
+  | TerminalThreadItem
+
+interface ToolActivityThreadItem {
+  key: string              // task_id + call_id
+  callId: string
+  tool: string
+  state: 'running' | 'success' | 'error' | 'cancelled' | 'unknown'
+  started?: ToolStartedPayload
+  finished?: ToolFinishedPayload
+  fileChange?: FileChangedPayload
+  command?: CommandFinishedPayload
+  rawEvents: AgentEvent[]
+}
+
+interface TaskRunViewModel {
+  taskId: string
+  status: TaskStatus
+  createdAt: string
+  items: ThreadItem[]
+  summary: TaskSummary | null
+  eventWindowComplete: boolean
+}
+
+interface ConversationThreadViewModel {
+  conversationId?: string   // M5 未持久化会话时为空
+  runs: TaskRunViewModel[]  // M5 长度为 0 或 1；M6 可为多个
+}
 ```
 
-实现：
+`buildTaskRun(task, events)` 必须：
+
+- 按数字事件 ID 处理，复杂度保持 O(n)；
+- 使用 `Map<call_id, activity>` 聚合并保持首次出现顺序；
+- 让 `file_changed` 和 `command_finished` 成为同一活动的附件，不重复生成主活动；
+- 支持 started 尚未 finished 的 running 状态；
+- 支持只有 finished、只有 specialized event、取消事件和 `payload_truncated` 的降级展示；
+- 忽略空的 agent message，但保留 recovery/scaffold；
+- 410 后只表示“当前保留的事件窗口”，不得暗示时间线完整；
+- 使用稳定 key 更新已有 Activity，避免流式到达时卡片跳动。
+
+`buildConversationThread(runs)` 在 M5 仅负责保序组合，不重新解释事件。M6 可以从持久化 Session 加载多个 Task，再复用同一 `buildTaskRun`。Summary 仍以 Task 为单位，禁止提前设计一份会覆盖各 Task 事实的可变“会话总总结”。
+
+### 5.1 M6 前向兼容状态边界
+
+- `activeTask`：全局唯一的在途任务及 SSE 观察状态；
+- `selectedContext`：当前展示的 TaskRun，M5 与 activeTask 通常相同但类型上独立；
+- `recentContextStore`：封装版本化 localStorage 读写与损坏数据清理；组件不得直接访问 key；
+- `TaskRunViewModel`：纯展示数据，不拥有 SSE、fetch 或 localStorage；
+- Event ID 只在单个 Task 内排序，跨 Task 的顺序由 M6 的会话 ordinal 决定，不比较不同 Task 的 Event ID；
+- Tool `call_id` 只在 Task 内唯一，所有前端 key 必须带 `task_id` 前缀。
+
+M5 使用 `coding-agent:recent-context:v1` 保存 `{ taskId }`，并继续兼容读取旧的 `coding-agent:last-task-id`。M6 将 v1 数据迁移为 `{ sessionId, taskId }`；迁移失败只清除该引用，不影响后端历史。
+
+## 6. 确定性 Formatter
+
+建议文件：
 
 ```text
-AgentEvent[]
-    ↓
-buildTaskThread()
-    ↓
-ThreadItem[]
-    ↓
-TaskThread.vue
+frontend/src/thread/buildTaskRun.ts
+frontend/src/thread/buildConversationThread.ts
+frontend/src/formatters/toolActivity.ts
+frontend/src/formatters/fileActivity.ts
+frontend/src/formatters/commandActivity.ts
 ```
 
-这样 UI 不再直接依赖 Event 原始结构。
+Formatter 返回展示模型，不返回业务结论：
 
----
+```typescript
+interface ActivityPresentation {
+  title: string
+  detail?: string
+  status: 'running' | 'success' | 'error' | 'warning'
+}
+```
 
-# 8. Tool Started / Finished 合并策略
+规则：
 
-同一次 Tool Call：
+| 工具 | 默认成功文案 | 事实来源 |
+|---|---|---|
+| `list_files` | 查看了项目目录 / `{path}` 目录 | started arguments + finished ok |
+| `read_file` | 阅读了 `{path}` | finished result output 优先，arguments 兜底 |
+| `search_text` | 搜索了“{query}” | arguments；匹配数仅在 output 明确提供时显示 |
+| `write_file` | 创建/更新了 `{path}` | `file_changed.action`，无 file_changed 不声称已修改 |
+| `replace_in_file` | 修改了 `{path}` | `file_changed`，无 file_changed 不声称已修改 |
+| `run_command` | 运行测试 / 执行命令 | `command_finished` 的 ok、exit、timeout、cleanup |
+
+共同要求：
+
+- 失败优先展示结构化 `error_code` 的友好映射，原消息在 Details；
+- `payload_truncated` 使用“活动详情已截断”的安全降级，不解析 preview 为可信结构；
+- 路径、query、command 长度在视觉层省略，完整受限值可在 Details 查看；
+- 不重复裁剪 ToolResult 业务输出；只做视觉省略和可滚动容器。
+
+## 7. File 与 Command 附件
+
+### 7.1 File Change
+
+- 清楚区分 created / modified；
+- 展示真实文本 Diff；
+- `diff_truncated` 和事件 `payload_truncated` 分开说明；
+- 不根据 Diff 文本猜测业务含义；
+- 不展示“修改失败”的 File Change，因为失败时本来不应有 `file_changed`；失败归属 Tool Activity。
+
+### 7.2 Command
+
+- 默认显示命令、成功/失败、exit code、duration、timeout、cleanup；
+- stdout/stderr 默认折叠，展开后展示后端受限内容；
+- 测试通过以 `ok=true` 且 exit code 为 0 为事实；
+- `2 passed` 等文本只是命令输出摘录，不替代结构化成功状态；
+- timeout 和 cleanup failure 必须有文字/图标，不能只靠颜色。
+
+### 7.3 Debug Details
+
+P1 可显示合并活动的 `rawEvents[]`，而不是单个 Raw Event。默认折叠，并明确这是开发信息。
+
+## 8. ExecutionTrace 与 Summary 架构
+
+### 8.1 所有权
+
+ExecutionTrace 由 TaskManager 的单 Task 生命周期拥有，不放在全局 Runtime 状态，也不只依赖 `AgentRuntime.run()` 成功返回。
+
+推荐增加轻量 `TraceRecorder`：
 
 ```text
-tool_started
-tool_finished
+Runtime / injected runner
+        │ publish(raw structured event)
+        ▼
+TraceRecorder ─────► ExecutionTrace
+        │
+        ▼
+EventLog（payload/history bounds）
 ```
 
-不应默认显示成两个卡片。
+它在同一 `publish` 调用中保留原始结构化 payload，并在 EventLog 发布成功后更新 Trace；这不是“任务结束后扫描 EventLog”，因此即使 payload 被裁剪或历史被淘汰也能保留完整的有界统计。EventLog 发布失败时不得记录未发生的事实。Recorder 不改变事件、不进入 LLM context、不改变 Tool Schema。
 
-应通过：
+为避免强耦合，`TaskRunner` 应依赖只包含 `publish()` 的 EventPublisher Protocol；TaskManager 把 TraceRecorder 传给 Runner，SSE 仍读取真正的 EventLog。现有注入 Runner 测试必须同步迁移。
 
-```text
-call_id
-```
+### 8.2 Trace 记录规则
 
-合并。
+- `tool_calls`：每个唯一 `tool_started.call_id` 计一次；重复事件不重复计数；
+- `decision_steps`：只统计 `assistant_message.mode == agent` 的成功模型决策，不把 recovery 重试算作决策；
+- `files_read`：成功 `read_file` 的结果路径，保持首次出现顺序并去重；
+- `files_changed`：成功 `file_changed.path`，保持首次出现顺序并去重；
+- `commands`：按 `command_finished` 顺序记录有界事实；
+- `errors`：记录安全错误码，不保存供应商响应正文或密钥；
+- `duration_ms`：由 Task `started_at` / `finished_at` 计算，避免另一个时钟口径。
 
-例如：
+所有列表和字符串必须有显式上限。Summary 不是无限审计日志。
 
-```text
-tool_started:
-call_id = call_123
-read_file calculator.py
-
-tool_finished:
-call_id = call_123
-ok = true
-```
-
-UI 最终只展示：
-
-```text
-✓ 阅读了 calculator.py
-```
-
-执行过程中可以先显示：
-
-```text
-○ 正在阅读 calculator.py
-```
-
-完成后更新成：
-
-```text
-✓ 阅读了 calculator.py
-```
-
-失败则：
-
-```text
-✕ 无法读取 calculator.py
-```
-
----
-
-# 9. 六种工具自然语言格式
-
----
-
-## 9.1 list_files
-
-### 运行中
-
-```text
-○ 正在查看项目目录
-```
-
-### 成功
-
-根目录：
-
-```text
-✓ 查看了项目目录
-```
-
-子目录：
-
-```text
-✓ 查看了 src 目录
-```
-
-### 可选详情
-
-```text
-发现 12 个文件
-```
-
-### 失败
-
-```text
-✕ 无法查看 src 目录
-```
-
-展开：
-
-```text
-路径不存在
-```
-
----
-
-## 9.2 read_file
-
-### 成功
-
-```text
-✓ 阅读了 calculator.py
-```
-
-指定范围：
-
-```text
-✓ 阅读了 calculator.py 第 20–80 行
-```
-
-### 失败
-
-```text
-✕ 无法读取 calculator.py
-```
-
----
-
-## 9.3 search_text
-
-搜索：
-
-```text
-divide
-```
-
-显示：
-
-```text
-✓ 搜索了 “divide”
-```
-
-若有统计：
-
-```text
-找到 3 处匹配
-```
-
-点击展开可以显示：
-
-```text
-calculator.py:4
-test_calculator.py:5
-test_calculator.py:9
-```
-
----
-
-## 9.4 write_file
-
-如果：
-
-```text
-action = created
-```
-
-显示：
-
-```text
-✓ 创建了 utils.py
-```
-
-如果覆盖：
-
-```text
-✓ 更新了 config.py
-```
-
-优先展示对应 `file_changed`。
-
----
-
-## 9.5 replace_in_file
-
-默认：
-
-```text
-✓ 修改了 calculator.py
-```
-
-下方展示 Diff。
-
-不要默认展示：
-
-```text
-old_text
-new_text
-arguments
-ToolResult JSON
-```
-
----
-
-## 9.6 run_command
-
-pytest：
-
-```text
-✓ 运行测试
-  python -m pytest -q
-
-  2 passed
-```
-
-失败：
-
-```text
-✕ 测试失败
-  python -m pytest -q
-
-  1 failed, 1 passed
-```
-
-普通命令：
-
-```text
-✓ 执行命令
-  python main.py
-```
-
-超时：
-
-```text
-✕ 命令执行超时
-```
-
-进程清理失败：
-
-```text
-⚠ 命令结束，但进程清理存在问题
-```
-
----
-
-# 10. File Change 展示
-
-文件修改是 Coding Agent 中最重要的可视化之一。
-
-建议：
-
-```text
-✓ 修改了 calculator.py
-
-  3 additions · 1 deletion
-
-  ┌──────────────────────────────
-    def divide(a, b):
-  +     if b == 0:
-  +         return None
-        return a / b
-  └──────────────────────────────
-```
-
-支持：
-
-```text
-created
-modified
-```
-
-若 diff 被截断：
-
-```text
-Diff 过长，仅显示部分内容
-```
-
-不得假装展示完整 Diff。
-
----
-
-# 11. Command 展示
-
-Command Item 包含：
-
-```text
-状态
-命令
-exit code
-stdout
-stderr
-duration
-```
-
-默认折叠 stdout/stderr。
-
-例如：
-
-```text
-✓ 运行测试
-python -m pytest -q
-
-2 passed in 0.18s
-```
-
-点击：
-
-```text
-Show output
-```
-
-展开完整的受限输出。
-
----
-
-# 12. Raw JSON 调试模式
-
-自然语言化以后不要彻底丢弃 JSON。
-
-建议：
-
-```text
-Activity
-    ↓
-Details
-    ↓
-Raw Event
-```
-
-默认折叠。
-
-仅供：
-
-```text
-Debug
-开发
-排查契约问题
-```
-
-普通用户不应直接看到。
-
----
-
-# 13. Agent Message 展示
-
-对于：
-
-```text
-assistant_message
-```
-
-应区分：
-
-```text
-mode = agent
-mode = recovery
-mode = scaffold
-```
-
----
-
-## Agent
-
-例如：
-
-```text
-Agent
-
-我先检查项目结构和失败测试。
-```
-
----
-
-## Recovery
-
-例如：
-
-```text
-⚠ 模型请求暂时失败，正在重试。
-```
-
-可展开：
-
-```text
-LLM_TIMEOUT
-2 / 3
-```
-
----
-
-## Scaffold
-
-例如：
-
-```text
-模型尚未配置，Agent 无法执行任务。
-```
-
----
-
-# 14. Task Summary 设计
-
-任务结束必须显示完整 Summary。
-
-目标：
-
-```text
-✓ Task completed
-
-修复了 calculator.py 中 divide 的除零行为。
-
-Changes
-• calculator.py
-  增加 divisor == 0 时返回 None 的处理
-
-Verification
-• python -m pytest -q
-• 2 passed
-
-Execution
-• 阅读 2 个文件
-• 修改 1 个文件
-• 执行 1 条命令
-• 5 个 Agent steps
-• 5 个 tool calls
-
-Result
-所有测试通过。
-```
-
-失败则：
-
-```text
-✕ Task failed
-
-Agent 未能在最大步骤内完成任务。
-
-Changes
-• calculator.py
-
-Verification
-• python -m pytest -q
-• 1 failed
-
-Failure
-AGENT_STEP_LIMIT
-```
-
----
-
-# 15. Summary 数据来源
-
-Summary 分成：
-
-```text
-Agent Narrative
-+
-Execution Facts
-```
-
----
-
-## 15.1 Agent Narrative
-
-来源：
-
-```text
-AgentRuntime final reply
-```
-
-例如：
-
-```text
-修复了 divide 对零除数的处理，并确认测试通过。
-```
-
----
-
-## 15.2 Execution Facts
-
-必须来源于真实 Runtime。
-
-包括：
-
-```text
-files_read
-files_changed
-commands
-tests
-tool_calls
-decision_steps
-errors
-duration
-```
-
-不得依赖 LLM 自行声称。
-
----
-
-# 16. 后端 TaskSummary 数据模型
-
-建议新增：
+### 8.3 建议模型
 
 ```python
 class CommandSummary(BaseModel):
     command: str
-    exit_code: int | None = None
     ok: bool
+    exit_code: int | None = None
     timed_out: bool = False
+    cleanup_ok: bool = True
 
+class VerificationSummary(BaseModel):
+    kind: Literal['pytest']
+    command: str
+    passed: bool
+    exit_code: int | None = None
+    output_excerpt: str | None = None
+    output_truncated: bool = False
 
 class TaskSummary(BaseModel):
-    final_message: str = ""
-
-    files_read: list[str] = []
-    files_changed: list[str] = []
-
-    commands: list[CommandSummary] = []
-
+    files_read: list[str] = Field(default_factory=list)
+    files_changed: list[str] = Field(default_factory=list)
+    commands: list[CommandSummary] = Field(default_factory=list)
+    verification: VerificationSummary | None = None
     tool_calls: int = 0
     decision_steps: int = 0
-
-    tests_passed: bool | None = None
-
+    error_codes: list[str] = Field(default_factory=list)
     duration_ms: float | None = None
 ```
 
-可根据现有 Task Model 风格调整。
+模型最终 Narrative 继续由现有 `Task.result` 提供，失败事实由 `Task.error` 提供，避免再复制一份可能漂移的 `final_message`。TaskSummary 只保存 Runtime Facts。
 
----
+### 8.4 pytest 判定
 
-# 17. ExecutionTrace
+M5 第一版只识别命令 argv 等价于：
 
-不要依赖 EventLog 最终反向统计完整任务。
+- `pytest ...`
+- `python -m pytest ...`
+- `python3 -m pytest ...`
 
-原因：
+若执行多次，以最后一次识别出的 pytest 命令为 Verification：
 
-```text
-Event History
-```
+- exit code 0 且 `ok=true` → passed；
+- 非 0、timeout 或 `ok=false` → failed；
+- 未执行已识别命令 → `verification=None`。
 
-有：
+命令字符串中偶然包含“pytest”不能算测试。`output_excerpt` 是受限展示摘录，不参与 passed 判定。npm/vitest/jest/cargo/go 留到 P1。
 
-```text
-字符上限
-事件数量上限
-410 历史淘汰
-```
+### 8.5 终态顺序
 
-所以 EventLog 不是完整业务状态存储。
-
-建议增加：
+TaskManager 在所有成功、失败、取消和 shutdown 路径中必须按以下顺序收口：
 
 ```text
-backend/app/agent/trace.py
+设置 Task terminal status/error/result
+→ 设置 finished_at
+→ build TaskSummary
+→ 保存到 Task.summary
+→ 发布 task_completed/task_failed
 ```
 
-或：
+这样终态 SSE 到达后，`GET /api/tasks/{id}` 已经能返回一致 Summary。`summary` 在 PENDING/RUNNING 时为 `null`，在 terminal 时必须非空。
 
-```text
-backend/app/agent/summary.py
-```
+终态事件无需复制完整 Summary，避免放大有界事件历史；前端沿用 M3 的终态二次查询取得 Summary。
 
----
+## 9. API 与前端契约
 
-## ExecutionTrace 示例
-
-```python
-@dataclass
-class ExecutionTrace:
-    tool_calls: int = 0
-    decision_steps: int = 0
-
-    files_read: list[str] = field(default_factory=list)
-    files_changed: list[str] = field(default_factory=list)
-
-    commands: list[CommandSummary] = field(default_factory=list)
-
-    started_at: float | None = None
-    finished_at: float | None = None
-```
-
----
-
-# 18. Runtime Trace 更新
-
-在：
-
-```text
-AgentRuntime.run()
-```
-
-创建：
-
-```text
-trace = ExecutionTrace()
-```
-
-每次模型成功决策：
-
-```text
-trace.decision_steps += 1
-```
-
-每次 Tool Call：
-
-```text
-trace.tool_calls += 1
-```
-
----
-
-## read_file
-
-成功：
-
-```text
-trace.files_read += path
-```
-
----
-
-## write_file / replace_in_file
-
-成功并 changed：
-
-```text
-trace.files_changed += path
-```
-
----
-
-## run_command
-
-记录：
-
-```text
-command
-exit_code
-ok
-timed_out
-```
-
----
-
-# 19. Summary Builder
-
-建议新增：
-
-```text
-backend/app/agent/summary.py
-```
-
-职责：
-
-```text
-ExecutionTrace
-+
-final_message
-+
-terminal status
-    ↓
-TaskSummary
-```
-
-例如：
-
-```python
-def build_task_summary(
-    trace: ExecutionTrace,
-    final_message: str,
-) -> TaskSummary:
-    ...
-```
-
----
-
-# 20. tests_passed 判定
-
-不能仅通过：
-
-```text
-command contains pytest
-```
-
-长期建议采用相对保守的方式。
-
-第一版：
-
-```text
-存在 command：
-包含 pytest
-且
-exit_code == 0
-```
-
-则：
-
-```text
-tests_passed = True
-```
-
-存在 pytest command 但最后一次失败：
-
-```text
-tests_passed = False
-```
-
-未执行 pytest：
-
-```text
-tests_passed = None
-```
-
-未来可以扩展：
-
-```text
-npm test
-vitest
-jest
-cargo test
-go test
-```
-
-当前不是 P0。
-
----
-
-# 21. Task Model 扩展
-
-建议：
+扩展现有 Task：
 
 ```python
 class Task(BaseModel):
@@ -1250,1057 +385,222 @@ class Task(BaseModel):
     summary: TaskSummary | None = None
 ```
 
-任务完成：
-
-```text
-COMPLETED
-+
-summary
-```
-
-任务失败也可以产生 Summary：
-
-```text
-FAILED
-+
-partial summary
-```
-
-这样前端即使 Event History 不完整，仍可以：
-
-```text
-GET /api/tasks/{id}
-```
-
-拿到最终 Summary。
-
----
-
-# 22. API 契约
-
-现有：
-
-```text
-GET /api/tasks/{id}
-```
-
-直接增加：
-
-```json
-{
-  "id": "...",
-  "status": "COMPLETED",
-  "result": "...",
-  "summary": {
-    "files_read": [],
-    "files_changed": [],
-    "commands": [],
-    "tool_calls": 5,
-    "decision_steps": 5,
-    "tests_passed": true
-  }
-}
-```
-
-不需要额外增加 Summary API。
-
----
-
-# 23. 前端 TaskSummary 组件
-
-新增：
-
-```text
-TaskSummary.vue
-```
-
-输入：
-
-```typescript
-summary: TaskSummary
-status: TaskStatus
-error?: TaskError
-```
-
-展示：
-
-```text
-Completion status
-Agent narrative
-Changes
-Verification
-Execution stats
-Failure
-```
-
----
-
-# 24. 前端 Formatter 设计
-
-新增：
-
-```text
-frontend/src/formatters/toolActivity.ts
-```
-
-核心接口：
-
-```typescript
-export interface ActivityPresentation {
-  title: string
-  detail?: string
-  status: 'running' | 'success' | 'error' | 'warning'
-}
-```
-
-例如：
-
-```typescript
-formatToolActivity(toolStarted, toolFinished)
-```
-
-返回：
-
-```typescript
-{
-  title: '阅读了 calculator.py',
-  status: 'success'
-}
-```
-
----
-
-# 25. Formatter 不得承担业务逻辑
-
-Formatter 可以：
-
-```text
-翻译名称
-格式化路径
-生成简洁句子
-```
-
-但不应该：
-
-```text
-判断文件是否真的修改成功
-判断 pytest 是否真的通过
-推断 Tool Result 没有表达的事实
-```
-
-这些必须来自 Event。
-
----
-
-# 26. CSS / 视觉方向
-
-目标是接近 Codex 的信息密度与层次，而不是逐像素复制。
-
-建议：
-
-### 主体
-
-```text
-最大宽度适中
-大量留白
-任务流居中
-```
-
-### Sidebar
-
-```text
-窄
-低视觉权重
-```
-
-### Message
-
-避免每条都使用大 Card。
-
-更多使用：
-
-```text
-Avatar / Label
-Text
-```
-
-### Activity
-
-类似：
-
-```text
-✓ Read calculator.py
-```
-
-紧凑行式设计。
-
-### File Diff
-
-使用：
-
-```text
-monospace
-局部背景
-可滚动
-```
-
-### Command
-
-默认摘要，输出可展开。
-
----
-
-# 27. 不应复制 Codex 的内容
-
-M5 不做：
-
-```text
-复杂代码编辑器
-Monaco
-内置 Terminal
-多 Panel
-IDE 文件树
-多 Repo 管理
-Git History
-多 Agent
-```
-
-当前项目重点仍然是：
-
-```text
-Agent Task Execution
-```
-
----
-
-# 28. 开发阶段划分
-
----
-
-# Phase A：页面骨架重构
-
-目标：
-
-```text
-Sidebar
-+
-Task Thread
-+
-Composer
-```
-
-修改：
-
-```text
-App.vue
-style.css
-TaskInput.vue
-```
-
-新增：
-
-```text
-Sidebar.vue
-TaskComposer.vue
-```
-
-验收：
-
-- Workspace 正确显示；
-- Agent Ready 状态正确；
-- Task 可以正常提交；
-- 当前 M3 功能不丢失；
-- 页面在窄屏下不横向溢出。
-
----
-
-# Phase B：Task Thread
-
-新增：
-
-```text
-TaskThread.vue
-UserMessage.vue
-AgentMessage.vue
-```
-
-将：
-
-```text
-AgentTimeline.vue
-```
-
-逐步替换。
-
-验收：
-
-- 用户 Prompt 显示在 Thread；
-- assistant_message 显示为 Agent 消息；
-- 顺序和真实 Event 一致。
-
----
-
-# Phase C：Tool Activity Formatter
-
-新增：
-
-```text
-formatters/toolActivity.ts
-ActivityItem.vue
-```
-
-支持六工具。
-
-验收：
-
-```text
-list_files
-read_file
-search_text
-write_file
-replace_in_file
-run_command
-```
-
-全部默认自然语言展示。
-
----
-
-# Phase D：Tool Call 合并
-
-根据：
-
-```text
-call_id
-```
-
-将：
-
-```text
-tool_started
-+
-tool_finished
-```
-
-合并。
-
-验收：
-
-单次：
-
-```text
-read_file
-```
-
-只出现一个 Activity。
-
-运行：
-
-```text
-○ 正在阅读 calculator.py
-```
-
-完成：
-
-```text
-✓ 阅读了 calculator.py
-```
-
----
-
-# Phase E：File / Command UX
-
-实现：
-
-```text
-FileChangeItem.vue
-CommandItem.vue
-```
-
-重点：
-
-```text
-Diff
-pytest result
-stdout/stderr
-truncate state
-```
-
-验收：
-
-- 修改文件时显示真实 Diff；
-- 创建和修改明确区分；
-- pytest 结果明显；
-- stderr 可以展开；
-- truncated 状态明确。
-
----
-
-# Phase F：ExecutionTrace
-
-后端新增：
-
-```text
-ExecutionTrace
-```
-
-Runtime 执行过程中同步维护真实统计。
-
-验收：
-
-- read_file 统计正确；
-- changed file 统计正确；
-- command 统计正确；
-- step 数正确；
-- tool call 数正确；
-- 不依赖 EventLog History 回读。
-
----
-
-# Phase G：TaskSummary
-
-新增：
-
-```text
-TaskSummary
-SummaryBuilder
-```
-
-Task API 返回 Summary。
-
-验收：
-
-```text
-COMPLETED
-FAILED
-```
-
-都能返回有效 Summary。
-
----
-
-# Phase H：TaskSummary UI
-
-新增：
-
-```text
-TaskSummary.vue
-```
-
-验收：
-
-任务完成后展示：
-
-```text
-Agent Summary
-Changes
-Verification
-Execution
-```
-
-失败后展示：
-
-```text
-Partial Changes
-Commands
-Failure
-```
-
----
-
-# Phase I：Debug Details
-
-自然语言 Activity 中增加：
-
-```text
-Details
-```
-
-可选显示：
-
-```text
-arguments
-result
-raw event
-```
-
-默认折叠。
-
-验收：
-
-普通页面无 JSON 噪声，但开发者仍可检查底层数据。
-
----
-
-# 29. 测试计划
-
----
-
-## 29.1 Formatter 单元测试
-
-测试：
-
-```text
-read_file success
-read_file failure
-list_files
-search_text
-write_file created
-write_file updated
-replace_in_file
-run_command pass
-run_command fail
-run_command timeout
-truncated payload
-```
-
----
-
-## 29.2 ExecutionTrace 测试
-
-验证：
-
-```text
-工具调用计数
-step 数
-files_read 去重
-files_changed 去重
-commands 顺序
-test 状态
-```
-
----
-
-## 29.3 TaskSummary 测试
-
-覆盖：
-
-```text
-成功任务
-失败任务
-无命令任务
-pytest 成功
-pytest 失败
-多次 pytest 最终成功
-命令 timeout
-```
-
----
-
-## 29.4 API 测试
-
-验证：
-
-```text
-GET Task
-```
-
-包含：
-
-```text
-summary
-```
-
-并满足类型契约。
-
----
-
-## 29.5 Frontend Typecheck
-
-执行：
-
-```powershell
-npm.cmd run typecheck
-```
-
-必须通过。
-
----
-
-## 29.6 Frontend Build
-
-执行：
-
-```powershell
-npm.cmd run build
-```
-
-必须通过。
-
----
-
-## 29.7 Browser Smoke
-
-至少覆盖：
-
-```text
-页面启动
-Workspace
-Agent Ready
-提交 Task
-Activity 自然语言
-File Diff
-Command Result
-Task Summary
-刷新恢复
-窄屏
-```
-
----
-
-## 29.8 M4 Regression
-
-M5 完成后必须重新执行：
-
-```powershell
-.\.venv\Scripts\python.exe scripts\run_m4_demo.py --runs 3
-```
-
 要求：
 
-```text
-3/3 success
-```
+- 不增加独立 Summary API；
+- PENDING/RUNNING 返回 `summary=null`；
+- COMPLETED/FAILED 返回 summary；
+- 旧字段 `result` / `error` 保持兼容；
+- 前端 `parseTask` 必须严格校验嵌套 Summary；
+- Summary 中不包含完整 stdout/stderr、Diff 或 Raw Event；
+- 404 重启后仍明确不可恢复，不能把 Summary 设计误称为持久化。
 
-不能拿旧 M4 数据代替。
+M5 不提前增加 `session_id` API 字段。前端的 `conversationId?` 只是展示层兼容位；M6 必须通过正式、严格校验的 Session DTO 填充，不能从 task_id 或 localStorage 推导伪会话。
 
----
+## 10. 组件落点
 
-# 30. M5 验收标准
-
----
-
-## 页面结构
-
-- [ ] 页面重构为 Sidebar + Task Thread + Composer；
-- [ ] Task Thread 成为主视觉区域；
-- [ ] Workspace 和 Agent Ready 保留；
-- [ ] 六工具状态不再占据主要空间。
-
----
-
-## Agent Conversation
-
-- [ ] 用户 Prompt 进入 Thread；
-- [ ] Assistant Message 以 Agent 消息显示；
-- [ ] Recovery 有独立视觉；
-- [ ] Failed 状态明确。
-
----
-
-## Tool Activity
-
-- [ ] `list_files` 自然语言；
-- [ ] `read_file` 自然语言；
-- [ ] `search_text` 自然语言；
-- [ ] `write_file` 自然语言；
-- [ ] `replace_in_file` 自然语言；
-- [ ] `run_command` 自然语言；
-- [ ] 默认不显示 JSON；
-- [ ] Raw JSON 仅在 Debug Details 中可见。
-
----
-
-## Tool 合并
-
-- [ ] tool_started / tool_finished 按 call_id 合并；
-- [ ] running / success / error 状态可更新；
-- [ ] 不重复显示相同工具调用。
-
----
-
-## File Change
-
-- [ ] created / modified 明确；
-- [ ] 显示真实 Diff；
-- [ ] truncated 明确；
-- [ ] 修改失败明确。
-
----
-
-## Command
-
-- [ ] 显示命令；
-- [ ] 显示 exit code；
-- [ ] 显示成功 / 失败；
-- [ ] pytest 结果清晰；
-- [ ] stdout / stderr 可展开；
-- [ ] timeout / cleanup 状态明确。
-
----
-
-## Task Summary
-
-- [ ] 显示模型最终总结；
-- [ ] 显示 files read；
-- [ ] 显示 files changed；
-- [ ] 显示 command history；
-- [ ] 显示测试结果；
-- [ ] 显示 decision steps；
-- [ ] 显示 tool calls；
-- [ ] 显示 duration；
-- [ ] 失败任务也有 partial summary；
-- [ ] Summary Execution Facts 不依赖 LLM 自述。
-
----
-
-## 稳定性
-
-- [ ] 后端全量 pytest 通过；
-- [ ] Ruff 通过；
-- [ ] frontend typecheck 通过；
-- [ ] frontend production build 通过；
-- [ ] browser smoke 通过；
-- [ ] M4 real-model Demo 重新 3/3 通过。
-
----
-
-# 31. 优先级
-
-## P0
-
-必须完成：
+建议结构：
 
 ```text
-Codex 风格 Task Thread
-Tool Result 自然语言
-Tool Call 合并
-File Diff
-Command / Test Result
-ExecutionTrace
-TaskSummary
-TaskSummary UI
+frontend/src/
+├── App.vue
+├── types.ts
+├── api/client.ts
+├── state/recentContext.ts
+├── thread/buildTaskRun.ts
+├── thread/buildConversationThread.ts
+├── formatters/
+│   ├── toolActivity.ts
+│   ├── fileActivity.ts
+│   └── commandActivity.ts
+└── components/
+    ├── Sidebar.vue
+    ├── ConversationThread.vue
+    ├── TaskRunSection.vue
+    ├── TaskComposer.vue
+    ├── UserMessage.vue
+    ├── AgentMessage.vue
+    ├── ActivityItem.vue
+    ├── FileChangeDetails.vue
+    ├── CommandDetails.vue
+    ├── RecoveryItem.vue
+    └── TaskSummary.vue
 ```
 
----
+不要求为了目录好看一次性删除现有 M3 组件。先让新 Thread 通过相同事件 fixture，再替换 App 中的 AgentTimeline；确认无引用后再删除旧组件。
 
-## P1
+## 11. 视觉、响应式与无障碍 P0
 
-时间允许：
+- Thread 主列在宽屏限制可读宽度，Diff/Command 可比正文略宽但不突破 viewport；
+- 窄屏 Sidebar 收起为顶部项目信息，Composer 不遮挡内容；
+- 所有状态同时使用图标/文字和颜色；
+- 交互控件有可见 focus，Details 可用键盘展开；
+- 连接、恢复、终态使用适当 `role=status` / `aria-live`，避免每条流式事件都打断读屏；
+- DOM 顺序与视觉顺序一致；
+- 时间、状态、按钮具有可理解名称；
+- 文字和交互元素满足 WCAG AA 对比度目标；
+- 尊重 `prefers-reduced-motion`；
+- 自动滚动只在用户本来位于底部附近时发生，用户上滚后不抢回位置；
+- 长路径、长命令、无空格文本和 512 个事件不会造成横向页面溢出。
+
+截图只能支持视觉风险判断，键盘、读屏、focus 和 live region 必须实际测试，不能声称仅凭截图达到完整无障碍合规。
+
+## 12. 修订后的实施阶段
+
+### Phase 0：视觉基线和目标
+
+完成第 3 节截图、状态清单和桌面/窄屏目标。此阶段不改业务逻辑。
+
+### Phase 1：契约与测试基础
+
+- 定义 TaskSummary、ThreadItem、TaskRunViewModel、ConversationThreadViewModel 和 fixture；
+- 定义 `ComposerIntent`、`activeTask` / `selectedContext` 边界和版本化 recent-context 迁移；
+- 前端加入 Vitest；若做 Vue 组件测试，同时加入 `@vue/test-utils` 与 jsdom；
+- 若 browser smoke 是退出标准，将 `@playwright/test` 作为明确测试依赖并更新 lockfile；
+- 先写 reducer/formatter/summary 的失败测试。
+
+### Phase 2：Trace 与 Summary 后端
+
+- 实现 ExecutionTrace、TraceRecorder、SummaryBuilder；
+- 更新 TaskRunner 的 EventPublisher Protocol 和注入 Runner；
+- 覆盖成功、失败、取消、shutdown、历史淘汰、重复 call_id 和多次 pytest；
+- 扩展 Task API 和前端 Task parser。
+
+### Phase 3：Thread Reducer 与 Formatter
+
+- 实现 O(n) `buildTaskRun` reducer 与只负责组合的 `buildConversationThread`；
+- 六工具自然语言；
+- 生命周期聚合、orphan/truncated/cancelled fallback；
+- 使用真实 M4 事件 fixture 回归。
+
+### Phase 4：页面骨架与任务线程
+
+- Sidebar、ConversationThread、TaskRunSection、TaskComposer；M5 仅显示一个 TaskRun；
+- User/Agent/Recovery/Terminal；
+- 保留 M3 的 watchTask、410、404、restoreTask、refreshTask 和终态一致性逻辑，但把网络观察状态移出展示组件；
+- 验证 Sidebar 空历史输入和 Composer `new_task` 意图，为 M6 接入点加契约测试。
+
+### Phase 5：File / Command / Summary
+
+- File 和 Command 作为 Tool Activity 附件；
+- TaskSummary 展示 Narrative、Changes、Verification、Execution、Failure；
+- 事件窗口不完整时仍用 Task Summary 展示完整终态事实。
+
+### Phase 6：无障碍、响应式与 Debug
+
+- 完成键盘/focus/live region/reduced motion/自动滚动；
+- 完成 390px 和长内容压力测试；
+- 时间允许再加入 Raw Event Debug。
+
+### Phase 7：收口验证
+
+- 后端全量 pytest、Ruff；
+- 前端 Vitest、typecheck、production build；
+- browser smoke 覆盖 idle/running/completed/failed/refresh/410/404/窄屏；
+- 在用户明确授权真实调用和费用后，重新运行 M4 三轮；
+- 密钥扫描和文档更新。
+
+## 13. 测试矩阵
+
+### 13.1 Reducer / Formatter
+
+- 六工具 running/success/error/cancelled；
+- started + finished + specialized event 聚合；
+- out-of-order fixture、orphan event、重复 ID/call_id；
+- `payload_truncated`；
+- 空 assistant message；
+- 410 后不完整窗口；
+- 两个 TaskRun 的 event ID / call_id 相同仍生成不同稳定 key，组合后顺序不串线；
+- 500+ 事件保持线性处理且 UI 不横向溢出。
+
+### 13.2 Trace / Summary
+
+- 工具调用与 agent decision 计数；
+- files_read/files_changed 去重且保持顺序；
+- commands 顺序和字段上限；
+- pytest 最后一次成功/失败、timeout、未测试；
+- completed/failed/runtime error/shutdown 均有 summary；
+- Summary 不受 EventLog 历史淘汰影响；
+- 终态 SSE 与 GET Task Summary 一致。
+
+### 13.3 API / 前端
+
+- terminal 前 `summary=null`，terminal 后存在；
+- 嵌套 payload 的严格运行时校验；
+- 恢复刷新、410、404 和 204；
+- 新任务不伪装成原任务后续消息；
+- Composer 只发出 `new_task` 意图，Sidebar 空历史不会出现伪条目；
+- recent-context v1、旧 key 迁移和损坏 localStorage 降级；
+- `activeTask` 与 `selectedContext` 分离后，展示切换不终止任务观察；
+- Narrative 与 Runtime Facts 冲突 fixture 下事实优先。
+
+### 13.4 Browser 与 M4
+
+- 页面启动、Agent Ready、提交、自然语言活动、Diff、命令、Summary；
+- 键盘操作和 focus；
+- 桌面和 390px 窄屏；
+- 页面刷新恢复与终态一致性；
+- M4 每轮重置、基线失败、真实 Agent 修复、独立 pytest，要求新的 3/3，不复用旧报告。
+
+## 14. M5 退出标准
+
+只有同时满足以下条件才完成：
+
+- [ ] 已有经过检查的桌面/窄屏视觉目标，不以 ASCII 图替代；
+- [ ] 页面是 Sidebar + ConversationThread + 单个 TaskRunSection + Composer；
+- [ ] 用户 Prompt、非空 Agent Message、Recovery 和失败终态清楚；
+- [ ] 六工具默认使用确定性自然语言；
+- [ ] 同一 `call_id` 只有一个主 Activity，File/Command 是附件；
+- [ ] Diff、stdout/stderr、timeout、cleanup 和两类 truncated 均不误导；
+- [ ] Summary Facts 来自完整 Trace，模型 Narrative 不覆盖事实；
+- [ ] completed 和 failed（含 shutdown）均有 terminal Summary；
+- [ ] 刷新、410、404、204 和终态查询保持 M3 语义；
+- [ ] 新任务文案不暗示多轮上下文或取消能力；
+- [ ] `buildTaskRun` 可被多 Task 组合复用，Task/Event/Tool key 均不会跨 Task 冲突；
+- [ ] Composer、Sidebar 和 recent-context 通过前向兼容契约测试，且 M5 不显示伪历史/伪 follow-up；
+- [ ] 键盘、focus、live region、AA 对比度目标、reduced motion 和窄屏通过；
+- [ ] 后端 pytest/Ruff、前端 Vitest/typecheck/build、browser smoke 全部通过；
+- [ ] 经用户授权后，M4 真实模型 Demo 重新连续 3/3；
+- [ ] 报告、截图、日志和仓库不包含 API Key。
+
+## 15. 风险与止损
+
+| 风险 | 预防与止损 |
+|---|---|
+| CSS 重构破坏恢复链路 | App 网络状态机保持不动，先替换 presentation；每 Phase 跑 M3 恢复测试 |
+| Trace 与事件事实漂移 | TraceRecorder 消费同一原始发布事实，不在 Runtime 重写一套分支 |
+| Summary 无限增长 | 所有列表/字符串显式上限，不保存完整输出/Diff |
+| UI 把缺失事实写成成功 | Formatter 仅在 finished/specialized 事件证明时使用成功动词 |
+| “新任务”被理解为多轮 | M5 明确新 Task 且不复用上下文；内部使用可组合 TaskRun，但不暴露尚未实现的 follow-up |
+| M6 接入时重写 M5 | ConversationThread 组合 TaskRun；Composer 发意图；Sidebar 以数据输入驱动；recent-context 版本化 |
+| 大事件序列卡顿 | O(n) reducer、稳定 key；使用 500+ fixture 测试，必要时再评估虚拟列表 |
+| 真实模型回归产生费用 | 只在确定性测试和 smoke 通过后，经用户授权运行三轮 |
+| M5 挤压后续里程碑 | P1 首先下砍；不得挪用 M6 的持久化/重启安全，也不得挪用 M7 的密钥扫描、README.txt、视频和提交检查 |
+
+## 16. 建议提交划分
 
 ```text
-Activity 展开动画
-执行时间
-图标优化
-Raw Event Debug
-更漂亮的 Diff
-自动滚动
+test(ui): add thread reducer and formatter fixtures
+feat(agent): add bounded execution trace and terminal task summary
+feat(ui): build reusable task-run reducer and deterministic activity formatters
+feat(ui): compose single task run in conversation thread shell
+feat(ui): attach file command details and task summary
+fix(ui): preserve recovery accessibility and narrow-screen behavior
+test: add m5 browser and m4 real-model regressions
+docs: document m5 ux contracts and verification
 ```
 
----
+每个提交都应保持已有测试可运行。不要在一个提交中同时更改 Runtime、API 契约、完整页面结构和全部样式。
 
-## P2
+## 17. M5 完成后的边界
 
-本阶段明确不做：
+M5 的成果是“用户能理解一个真实 Task 如何被完成”，不是完整 IDE，也不是多轮聊天产品。它应让用户快速确认：
 
-```text
-Monaco Editor
-文件树 IDE
-内置 Terminal
-数据库 Task History
-多 Workspace
-多用户
-Git 工具
-多 Agent
-插件系统
-```
+- Agent 检查了什么；
+- 哪些行为成功、失败或恢复；
+- 哪些文件真实发生变化；
+- 执行了哪些命令，最后一次识别出的 pytest 是否通过；
+- Task 为何完成或失败；
+- Summary 中哪些是模型叙述，哪些是 Runtime 事实。
 
----
-
-# 32. 风险
-
----
-
-## 32.1 前端重构破坏已有 SSE 恢复
-
-风险：
-
-重构 `App.vue` 时误删：
-
-```text
-410 recovery
-404 restart handling
-localStorage restore
-terminal consistency
-```
-
-措施：
-
-保留：
-
-```text
-api/client.ts
-watchTask
-restoreTask
-refreshTask
-```
-
-优先只改 Presentation Layer。
-
----
-
-## 32.2 Formatter 和后端事件脱节
-
-措施：
-
-前端 parser 保持严格类型校验。
-
-Formatter 必须基于：
-
-```text
-AgentEvent discriminated union
-```
-
-不能使用松散 `any`。
-
----
-
-## 32.3 Summary 被 Event History 截断影响
-
-措施：
-
-采用：
-
-```text
-ExecutionTrace
-```
-
-而不是最终扫描 EventLog。
-
----
-
-## 32.4 模型 Summary 与事实不一致
-
-例如模型说：
-
-```text
-修改了 2 个文件
-```
-
-而 Runtime 只记录：
-
-```text
-1 file
-```
-
-UI 应优先显示 Runtime Execution Facts。
-
-模型内容单独作为：
-
-```text
-Agent Summary
-```
-
-不得覆盖真实数据。
-
----
-
-## 32.5 修改 Runtime 导致真实模型成功率下降
-
-措施：
-
-Summary Trace 不参与：
-
-```text
-LLM context
-Tool schema
-ToolResult
-StopController
-```
-
-它只旁路记录。
-
-M5 后重新跑 M4 3 次。
-
----
-
-# 33. 推荐实施顺序
-
-严格按以下顺序：
-
-```text
-1. 页面 Layout
-2. Task Thread
-3. Tool Formatter
-4. Tool started/finished 合并
-5. File Diff
-6. Command UX
-7. ExecutionTrace
-8. TaskSummary Model
-9. Task API Summary
-10. TaskSummary UI
-11. Debug Details
-12. Tests
-13. Browser Smoke
-14. Real-model M4 Regression
-15. 文档
-```
-
-不要先同时修改：
-
-```text
-Runtime
-API
-Frontend
-Event Protocol
-```
-
-避免一次变化范围过大。
-
----
-
-# 34. 建议 Commit 划分
-
-建议不要一次提交全部。
-
-例如：
-
-```text
-feat(ui): restructure page into codex-style task thread
-```
-
-```text
-feat(ui): render tool activity in human-readable form
-```
-
-```text
-feat(ui): merge tool lifecycle events and improve file command views
-```
-
-```text
-feat(agent): add execution trace and task summary
-```
-
-```text
-feat(ui): add task completion summary
-```
-
-```text
-test: add m5 ux and task summary regressions
-```
-
-```text
-docs: document m5 codex-style ux
-```
-
-这样出现问题更容易回滚。
-
----
-
-# 35. 完成后的整体架构
-
-M5 后：
-
-```text
-                         User
-                          │
-                          ▼
-                    Task Composer
-                          │
-                          ▼
-                     Task API
-                          │
-                          ▼
-                    TaskManager
-                          │
-                          ▼
-                    AgentRuntime
-                     /        \
-                    /          \
-                   ▼            ▼
-                 LLM      ExecutionTrace
-                   │            │
-              Tool Calls        │
-                   │            │
-                   ▼            │
-              ToolRegistry      │
-                   │            │
-          ┌────────┼────────┐   │
-          ▼        ▼        ▼   │
-        Files    Search   Command│
-          │        │        │   │
-          └────────┴────────┘   │
-                   │            │
-              Tool Result       │
-                   │            │
-                   └──────┬─────┘
-                          ▼
-                     TaskSummary
-                          │
-               ┌──────────┴──────────┐
-               ▼                     ▼
-           EventLog                Task API
-               │                     │
-               ▼                     │
-              SSE                    │
-               │                     │
-               └──────────┬──────────┘
-                          ▼
-                     Frontend
-                          │
-              ┌───────────┴──────────┐
-              ▼                      ▼
-         Task Thread            Task Summary
-              │
-              ▼
-       Natural Language UI
-```
-
----
-
-# 36. M5 退出标准
-
-只有同时满足以下条件，M5 才能认为完成：
-
-```text
-用户打开页面后，不需要理解 Event JSON；
-用户能够像查看 Codex Task 一样理解 Agent 的完整执行过程；
-每个工具行为都有自然语言描述；
-文件变化和命令验证能够清晰查看；
-任务完成后自动产生完整 Summary；
-Summary 的执行事实来自真实 Runtime；
-页面刷新、SSE 重连和终态一致性仍正常；
-现有后端测试全部通过；
-前端 typecheck / build 通过；
-M4 真实模型 Demo 再次连续 3/3 成功。
-```
-
----
-
-# 37. 最终目标
-
-M5 完成后，Coding Agent 的体验应该从：
-
-```text
-“这是一个能够显示 Agent 后端事件的工程 Demo”
-```
-
-提升为：
-
-```text
-“这是一个用户能够真正使用和理解的本地 Coding Agent 产品”
-```
-
-用户不再关注：
-
-```text
-tool_started
-tool_finished
-payload
-call_id
-JSON
-```
-
-而是看到：
-
-```text
-Agent 正在检查什么
-Agent 阅读了什么
-Agent 修改了什么
-Agent 为什么这样修改
-Agent 执行了什么
-测试是否真的成功
-最终整个任务完成了什么
-```
-
-这将作为 M5 的核心验收目标。
+完成 M5 后进入 M6“历史任务与多轮对话”。M6 复用本计划的 TaskRun、Summary、Composer intent 和 Sidebar 接口；不再重复实现活动格式化、工具输出裁剪或 Task 事实提取。M6 完成后进入 M7 最终交付，不再以新增 P1 功能阻塞 README.txt、视频、密钥扫描和最终提交检查。

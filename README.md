@@ -244,7 +244,7 @@ $pytestRunDir = Join-Path $env:TEMP ("coding-agent-pytest-" + [guid]::NewGuid().
 
 按实际克隆位置调整上述绝对路径。pytest 会清空 `--basetemp`：必须使用新建的专用随机路径，不能指定项目根目录或已有数据目录。脚本不删除旧测试目录；运行记录保留在系统临时目录，便于检查失败样例。
 
-当前在 Windows/Python 3.12 下全量 **248 项确定性测试通过**，并完成真实模型三轮 Demo（3/3 成功）。确定性模型测试继续使用 MockTransport/Fake LLM；真实 Demo 会产生供应商费用。详细记录见 [M4 说明](docs/Coding%20Agent%20M4%20Demo%20与%20可靠性完成说明.md)、[M3 说明](docs/Coding%20Agent%20M3%20API%20与%20UI%20完成说明.md) 与 [M2 Loop 说明](docs/Coding%20Agent%20M2%20上下文预算与%20Agent%20Loop%20说明.md)。保留既有 Starlette/httpx 弃用提示；前端严格类型检查与生产构建通过。
+当前在 Windows/Python 3.12 下全量 **248 项确定性测试通过**，并完成真实模型三轮 Demo（3/3 成功）。确定性模型测试继续使用 MockTransport/Fake LLM；真实 Demo 会产生供应商费用。详细记录见 [M4 说明](docs/Coding%20Agent%20M4%20Demo%20与可靠性完成说明.md)、[M3 说明](docs/Coding%20Agent%20M3%20API%20与%20UI%20完成说明.md) 与 [M2 Loop 说明](docs/Coding%20Agent%20M2%20上下文预算与%20Agent%20Loop%20说明.md)。保留既有 Starlette/httpx 弃用提示；前端严格类型检查与生产构建通过。
 
 三类机制应分开处理：`--basetemp` 隔离 pytest 临时目录及账户权限；`cache_dir` 管理 pytest 状态缓存；Python/pytest 字节码则由 `run_command` 为每次命令设置独立 `PYTHONPYCACHEPREFIX` 并禁写常规字节码。修复不删除工作区已有 `.pyc`，也不要求手动清缓存。该策略只作用于工具命令，不接管用户手动启动的 Python。
 
@@ -316,7 +316,10 @@ docs/           # 设计、实施计划与修改说明
 
 ## 项目文档
 
-- [M4 Demo 与可靠性完成说明](docs/Coding%20Agent%20M4%20Demo%20与%20可靠性完成说明.md)：真实 Bug、Prompt 调优、三轮真实模型指标和独立复验。
+- [M6 历史任务与多轮对话实施计划](docs/Coding%20Agent%20M6%20历史任务与多轮对话实施计划.md)：SQLite 历史、重启收敛、Session/follow-up、有界 TaskRecap、隐私删除与验收矩阵。
+- [M5 UX 重构实施计划](docs/Coding%20Agent%20M5%20UX%20重构实施计划.md)：可组合 TaskRun、确定性 Activity/Trace/Summary 与 M6 前向兼容接口。
+- [M7 最终交付计划](docs/Coding%20Agent%20M7%20最终交付计划.md)：候选冻结、全量复验、README.txt、录屏、安全扫描和最终 Go/No-Go。
+- [M4 Demo 与可靠性完成说明](docs/Coding%20Agent%20M4%20Demo%20与可靠性完成说明.md)：真实 Bug、Prompt 调优、三轮真实模型指标和独立复验。
 - [M3 API 与 UI 完成说明](docs/Coding%20Agent%20M3%20API%20与%20UI%20完成说明.md)：专用事件卡片、严格响应校验、SSE/整页恢复与终态一致性。
 - [M2 上下文预算与 Agent Loop 说明](docs/Coding%20Agent%20M2%20上下文预算与%20Agent%20Loop%20说明.md)：双总预算、结果裁剪、调用 ID 回填、真实事件、有界恢复、关闭语义和 Fake LLM 闭环。
 - [M2 LLM HTTP 适配说明](docs/Coding%20Agent%20M2%20LLM%20HTTP%20适配说明.md)：请求/响应契约、工具 Schema 复用、重试矩阵、安全错误与资源关闭。
@@ -327,4 +330,4 @@ docs/           # 设计、实施计划与修改说明
 - [实施计划](docs/Coding%20Agent%20实施计划.md)
 - [基础框架修改说明](docs/Coding%20Agent%20基础框架修改说明.md)
 
-`README.txt`、视频与提交压缩包属于 M5，当前没有生成正式提交材料；真实 Bug Demo 与三轮可靠性验收已完成。
+`README.txt`、视频与提交压缩包属于 M7，当前没有生成正式提交材料；真实 Bug Demo 与三轮可靠性验收已完成，M5 为可组合 TaskRun UX，M6 为历史任务持久化与多轮会话，二者均仍是计划而非已有能力。
