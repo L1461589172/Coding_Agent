@@ -30,12 +30,12 @@
 | M0 工程基础 | CLI、FastAPI、Vue、任务/SSE 链路；已有本地阶段提交 | 打包与单端口交付，不等于真实 Agent |
 | M1 工具 | 六工具可独立调用且已接入 Runtime；路径守卫、原子写入、唯一替换、Diff、受限命令与清理；D001 已修复 | POSIX 实机验收 |
 | M2 Runtime | HTTP 客户端；双总预算与结果裁剪；Agent Loop/ID 回填；真实工具事件及历史限制；有界恢复；关闭中写入/命令清理 | 已完成并通过 M4 真实供应商验收 |
-| M3 API/UI | 创建/查询、严格响应校验、专用 Tool/Shell/File Change 卡片、有界重连、整页恢复与终态核对 | 已完成；跨进程持久化不在范围内 |
+| M3 API/UI | 创建/查询、严格响应校验、专用 Tool/Shell/File Change 卡片、有界重连、整页恢复与终态核对 | 已完成；M3 阶段未含的跨进程持久化现由 M6 完成 |
 | M4 Demo | 初始失败的真实 Bug、可重复验收器、Prompt 调优；真实模型连续 3/3 成功 | 已完成；不外推为任意任务 100% 成功率 |
-| M5 UX | ConversationThread/TaskRun、`call_id` Activity 聚合、File/Command 附件、完整 Trace/Summary、版本化恢复与响应式/无障碍 | 已完成；历史持久化与 follow-up 仍属于 M6 |
+| M5 UX | ConversationThread/TaskRun、`call_id` Activity 聚合、File/Command 附件、完整 Trace/Summary、版本化恢复与响应式/无障碍 | 已完成；历史持久化与 follow-up 已由 M6 完成 |
 | M6 历史/多轮 | 项目内版本化 JSON、原子替换/单写锁、持久 Task/Event、durable replay、Session/follow-up API、确定性有界 TaskRecap、历史 UI、删除/容量/关闭 | 已完成；真实模型多轮/重启 smoke 3/3 |
 | Workspace 切换 | 前端绝对路径/最近列表；后端单活动资源图、任务阻断、历史隔离、失败回滚、Runtime/工具重绑定 | 已完成；不支持并行 Workspace 或磁盘扫描 |
-| M7 交付 | 开发说明与测试基础 | 待 M5/M6 完成后制作 README.txt、视频、密钥扫描与最终提交材料 |
+| M7 交付 | 最终确定性矩阵、API/Edge smoke、M6 真实重启/多轮 smoke、脱敏 `.env.example` 与 `submit/README.txt` | 视频、最终 commit/tag、压缩包和远程发布尚未执行，当前不能宣称完整 M7 Go |
 
 `/api/meta` 的六个 `tool_statuses` 均为 `ready`。模型三项配置完整时为 `agent_ready=true`、`mode=agent` 并运行真实 Loop；配置不完整时为 scaffold，任务以 `NOT_IMPLEMENTED` 结束且不执行工具。仍没有独立 HTTP 工具执行入口。
 
@@ -45,11 +45,12 @@
 
 | 检查 | 结果 |
 |---|---|
-| 源码清单 | 后端 42 个 Python 文件；前端 `src` 28 个文件；17 个测试模块和 conftest.py；M4 与 browser 验收脚本各 1 个 |
+| 源码清单 | 后端 42 个 Python 文件；前端 `src` 28 个文件；17 个测试模块和 conftest.py；M4/M6 真实模型脚本及 2 个 browser smoke 脚本 |
 | pytest 收集/全量复验 | **288 passed, 1 warning** |
 | M6 Phase 3–7 定向复验 | Session/API/context/retention 30 passed；Ruff lint/format 全通过 |
-| 前端 | 22 passed；严格类型与生产构建通过；M6 browser smoke 保留 2026-08-29 历史证据 |
-| M6 真实模型 smoke | 3/3 COMPLETED；重启恢复与 8 项检查全部通过，34.688 秒 |
+| 前端 | 4 files / 22 tests passed；严格类型通过；Vite production build 1546 modules，通过 |
+| API smoke | 隔离 Workspace/History 下通过 health/meta/workspaces、创建、SSE 终态、Session/Task 查询、删除后 404 与非法 Origin 403 |
+| M6 真实模型 smoke | **本轮重新执行**：3/3 COMPLETED；ordinal 1→2→3、重启恢复与 8 项检查全部通过，31.906 秒 |
 | M5 后真实模型 | 新的连续 3/3；平均 12.240 秒，Agent/独立 pytest 均为 2 passed，Summary 三项检查均通过 |
 | M3 API/UI 契约 | 新增 4 项：断线回放、大载荷、服务重启、成功/失败终态一致性 |
 | M2 Runtime 收口验证 | 新增 8 项事件/恢复/关闭测试；见 [Loop 说明](Coding%20Agent%20M2%20上下文预算与%20Agent%20Loop%20说明.md) |
@@ -57,10 +58,19 @@
 | D001 历史全量复验 | 连续三轮各 194 passed, 1 warning；见 [D001 修复说明](Coding%20Agent%20D001%20修复说明.md#4-验证记录) |
 | D001 针对性验证 | 新增 22 项 + 原无模型流程，共 23 passed；固定 mtime、等长修改、真实旧缓存与连续调用 |
 | Ruff | 全项目 lint 与 format check 无缓存检查通过 |
-| 前端单测/类型/构建 | Vitest 4 files / 22 tests；`vue-tsc --noEmit`；Vite 33 modules，全部通过 |
-| 浏览器 smoke | Playwright/Edge 已实测 failed/running/completed、附件、刷新、410/404/204、focus 与 390px |
+| 前端单测/类型/构建 | Vitest 4 files / 22 tests；`vue-tsc --noEmit`；Vite 1546 modules，全部通过 |
+| 浏览器 smoke | **本轮重新执行**：Playwright/Microsoft Edge 通过 failed/running/completed、Activity/Diff、刷新、410/404/204、focus、390px；M6 历史、follow-up、URL 与删除也通过 |
+| 敏感信息预扫描 | 工作树与可见 Git 历史常见 token 模式 0；当前 API Key 在 `output`/本地历史中出现 0；`.env` 仍被忽略，`.env.example` 已可跟踪且模型三项为空 |
 
-已有的 Starlette TestClient/httpx 弃用警告保留，未为消除它升级依赖。历史阶段数字均保留原意；当前结论基于 Workspace 切换接入后的 288 项 Python 测试和 22 项前端测试。本轮未重跑 browser 或真实模型 smoke。
+已有的 Starlette TestClient/httpx 弃用警告保留，未为消除它升级依赖。以上后端、前端、API、两个 Edge smoke 与 M6 真实模型数据均来自 2026-08-30 当前工作树的重新验收；M4 3/3 仍是阶段历史证据，本轮未重复执行。
+
+## 已知缺陷与交付缺口
+
+- Windows 未启用长路径支持时，若自定义 `CODING_AGENT_HISTORY_DIR` 很深，叠加 Workspace fingerprint、Session UUID 和 Task 文件名后可能超过旧式约 260 字符边界，首次持久化返回 503。默认仓库历史路径与本轮短路径隔离 smoke 均正常；配置覆盖目录时应选较短绝对路径。
+- 保留 1 条 Starlette TestClient/httpx 弃用 warning；运行时功能未受影响。
+- 仍为本地可信单用户、全局单活动 Task/Workspace、单进程模型；无用户任务取消入口，不是 OS 文件/网络沙箱，POSIX 分支尚未实机验收，日志脱敏管道待实现。
+- 浏览器功能与响应式 smoke 已通过；参考图的像素级并排视觉 QA 仍缺少可复用的本地源图证据。
+- `submit/README.txt` 已生成，但视频、最终 commit/tag、压缩包、远程 SHA 和材料发布未执行；按 M7 完整清单仍为 No-Go。
 
 ## 如何复验
 

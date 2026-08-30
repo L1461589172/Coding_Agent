@@ -9,7 +9,8 @@ const { chromium } = frontendRequire('playwright')
 
 const timestamp = '2026-08-29T08:00:00Z'
 const metadata = {
-  workspace: 'demo_workspace', mode: 'agent', agent_ready: true,
+  workspace: 'demo_workspace', workspace_path: 'D:\\Coding_Agent\\demo_workspace',
+  mode: 'agent', agent_ready: true,
   tools: ['list_files', 'read_file', 'search_text', 'write_file', 'replace_in_file', 'run_command'],
   tool_statuses: Object.fromEntries(
     ['list_files', 'read_file', 'search_text', 'write_file', 'replace_in_file', 'run_command']
@@ -19,7 +20,8 @@ const metadata = {
 
 function task(id, status, summary = null) {
   return {
-    id, prompt: '修复示例并运行测试', status, mode: 'agent', created_at: timestamp,
+    id, session_id: 'smoke-session', ordinal: 1,
+    prompt: '修复示例并运行测试', status, mode: 'agent', created_at: timestamp,
     started_at: timestamp, finished_at: status === 'COMPLETED' ? timestamp : null,
     result: status === 'COMPLETED' ? '修复完成，测试通过。' : null,
     error: null, summary,
@@ -56,6 +58,13 @@ async function json(route, body, status = 200) {
 
 async function mockMetadata(page) {
   await page.route('**/api/meta', (route) => json(route, metadata))
+  await page.route('**/api/workspaces', (route) => json(route, {
+    current: { name: 'demo_workspace', path: metadata.workspace_path },
+    recent: [{ name: 'demo_workspace', path: metadata.workspace_path }],
+  }))
+  await page.route('**/api/sessions?**', (route) => json(route, {
+    items: [], next_cursor: null,
+  }))
 }
 
 async function runMockAgentFlows(browser) {
@@ -70,8 +79,9 @@ async function runMockAgentFlows(browser) {
   })
   await runningPage.goto('http://127.0.0.1:5173')
   await runningPage.getByLabel('描述编程任务').fill('长任务')
-  await runningPage.locator('.composer').getByRole('button', { name: '开始新任务' }).click()
-  await runningPage.locator('.run-status').getByText('PENDING').waitFor()
+  await runningPage.locator('.composer').getByRole('button', { name: '开始新会话' }).click()
+  await runningPage.locator('.task-run').waitFor()
+  assert.equal(await runningPage.locator('.task-summary').count(), 0)
   assert.equal(await runningPage.locator('.composer textarea').isDisabled(), true)
   assert.equal(await runningPage.locator('.new-task-button').isDisabled(), true)
   releaseStream()
@@ -90,7 +100,7 @@ async function runMockAgentFlows(browser) {
   })
   await completedPage.goto('http://127.0.0.1:5173')
   await completedPage.getByLabel('描述编程任务').fill('修复示例并运行测试')
-  await completedPage.locator('.composer').getByRole('button', { name: '开始新任务' }).click()
+  await completedPage.locator('.composer').getByRole('button', { name: '开始新会话' }).click()
   await completedPage.locator('.task-summary').getByText('测试通过', { exact: false }).first().waitFor()
   assert.equal(await completedPage.locator('.activity-item').count(), 2)
   assert.equal(await completedPage.locator('.activity-details').count(), 2)
@@ -103,25 +113,21 @@ async function runMockAgentFlows(browser) {
   await completedPage.close()
 
   const terminalPage = await browser.newPage()
-  await terminalPage.addInitScript(() => localStorage.setItem(
-    'coding-agent:recent-context:v1', JSON.stringify({ version: 1, taskId: 'terminal-task' }),
-  ))
   await mockMetadata(terminalPage)
-  await terminalPage.route('**/api/tasks/terminal-task', (route) => json(route, task('terminal-task', 'COMPLETED', summary)))
+  await terminalPage.route('**/api/sessions/smoke-session/tasks?**', (route) => json(route, {
+    items: [task('terminal-task', 'COMPLETED', summary)], next_before_ordinal: null,
+  }))
   await terminalPage.route('**/api/tasks/terminal-task/events**', (route) => route.fulfill({ status: 204 }))
-  await terminalPage.goto('http://127.0.0.1:5173')
+  await terminalPage.goto('http://127.0.0.1:5173/?session=smoke-session')
   await terminalPage.locator('.task-summary').waitFor()
   assert.equal(await terminalPage.locator('.error-banner').count(), 0)
   await terminalPage.close()
 
   const missingPage = await browser.newPage()
-  await missingPage.addInitScript(() => localStorage.setItem(
-    'coding-agent:recent-context:v1', JSON.stringify({ version: 1, taskId: 'missing-task' }),
-  ))
   await mockMetadata(missingPage)
-  await missingPage.route('**/api/tasks/missing-task', (route) => json(route, { detail: 'Not found' }, 404))
-  await missingPage.goto('http://127.0.0.1:5173')
-  await missingPage.getByRole('alert').getByText(/历史已清空/).waitFor()
+  await missingPage.route('**/api/sessions/missing-session/tasks?**', (route) => json(route, { detail: 'Not found' }, 404))
+  await missingPage.goto('http://127.0.0.1:5173/?session=missing-session')
+  await missingPage.getByRole('alert').getByText(/历史会话已不存在/).waitFor()
   assert.equal(await missingPage.locator('.thread-empty').count(), 1)
   await missingPage.close()
 }
@@ -133,26 +139,27 @@ async function main() {
     const errors = []
     page.on('pageerror', (error) => errors.push(error.message))
     await page.goto('http://127.0.0.1:5173')
-    await page.locator('.workspace-name').getByText('demo_workspace', { exact: true }).waitFor()
-    assert.equal(await page.locator('.history-list').count(), 0)
+    const currentWorkspace = page.locator('.workspace-row.current .workspace-copy strong')
+    await currentWorkspace.waitFor()
+    assert.ok((await currentWorkspace.textContent()).trim())
+    assert.equal(await page.locator('.history-list').count(), 1)
     assert.equal(await page.locator('.conversation-thread').count(), 1)
     assert.match(await page.locator('.thread-empty').textContent(), /准备好开始一个任务/)
     await page.keyboard.press('Tab')
     assert.equal(await page.evaluate(() => document.activeElement?.tagName), 'BUTTON')
     await page.getByLabel('描述编程任务').fill('基础框架检查，不执行任何文件修改')
-    await page.locator('.composer').getByRole('button', { name: '开始新任务' }).click()
+    await page.locator('.composer').getByRole('button', { name: '开始新会话' }).click()
     await page.locator('.task-summary').getByText(/NOT_IMPLEMENTED/).waitFor()
     assert.equal(await page.locator('.task-run').count(), 1)
     assert.equal(await page.locator('.recovery-item').count(), 1)
     assert.equal(await page.locator('.activity-item').count(), 0)
-    assert.equal(await page.locator('.run-status').textContent(), 'FAILED')
     assert.match(await page.locator('.task-summary').textContent(), /0工具调用/)
     assert.equal(await page.locator('.new-task-button').isEnabled(), true)
     assert.equal(await page.locator('.composer textarea').isEnabled(), true)
     await page.reload()
     await page.locator('.task-summary').getByText(/NOT_IMPLEMENTED/).waitFor()
     assert.equal(await page.locator('.task-run').count(), 1)
-    assert.match(await page.locator('.info-banner').textContent(), /已恢复刷新前的任务/)
+    assert.ok(new URL(page.url()).searchParams.has('session'))
     const output = path.resolve('output/qa')
     fs.mkdirSync(output, { recursive: true })
     await page.screenshot({ path: path.join(output, 'm5-framework-desktop.png'), fullPage: true })

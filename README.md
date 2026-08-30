@@ -267,7 +267,7 @@ $pytestRunDir = Join-Path $env:TEMP ("coding-agent-pytest-" + [guid]::NewGuid().
 
 按实际克隆位置调整上述绝对路径。pytest 会清空 `--basetemp`：必须使用新建的专用随机路径，不能指定项目根目录或已有数据目录。脚本不删除旧测试目录；运行记录保留在系统临时目录，便于检查失败样例。
 
-当前在 Windows/Python 3.12 下后端全量 **288 项确定性测试通过**，Ruff lint/format 通过；前端 **22 passed**、严格类型和生产构建通过。Workspace 切换覆盖历史隔离、最近路径重启恢复、活动任务阻断、打开/关闭失败回滚及 Runtime/工具重绑定。2026-08-29 的 M6 browser smoke、真实模型三轮多轮/重启 smoke 3/3，以及 M4 独立真实模型 Demo 3/3 仍作为历史证据；本轮未重复产生真实模型费用。保留既有 Starlette/httpx 弃用提示。
+2026-08-30 最终候选重新验收：Windows/Python 3.12 下后端全量 **288 passed, 1 warning**，Ruff lint/format 与 `pip check` 通过；前端 **4 files / 22 tests passed**、严格类型和 Vite production build（1546 modules）通过。隔离 API smoke 与两个 Playwright/Microsoft Edge smoke 通过；M6 真实模型三轮多轮/重启 smoke 为 3/3 COMPLETED，ordinal 1→2→3，8 项检查全通过，耗时 31.906 秒。M4 独立真实模型 Demo 3/3 仍为阶段历史证据，本轮未重复。warning 是既有 Starlette TestClient/httpx 弃用提示。
 
 三类机制应分开处理：`--basetemp` 隔离 pytest 临时目录及账户权限；`cache_dir` 管理 pytest 状态缓存；Python/pytest 字节码则由 `run_command` 为每次命令设置独立 `PYTHONPYCACHEPREFIX` 并禁写常规字节码。修复不删除工作区已有 `.pyc`，也不要求手动清缓存。该策略只作用于工具命令，不接管用户手动启动的 Python。
 
@@ -338,6 +338,7 @@ docs/           # 设计、实施计划与修改说明
 - 服务关闭会等待已开始的原子文件写入落定，并等待命令进程树清理；取消不会回滚已经提交的文件修改，任务以 `SERVER_SHUTDOWN` 明确结束。
 - 本机 Host/Origin 限制不是身份认证，不能作为对公网或多用户部署的安全保障。
 - 项目文件和命令输出将来要作为不可信数据处理；实际日志脱敏管道待实现。
+- Windows 未启用长路径支持时，过深的自定义 `CODING_AGENT_HISTORY_DIR` 叠加内部 fingerprint/UUID 文件名可能超过旧式约 260 字符边界并使首次持久化返回 503；默认目录正常，自定义时使用较短绝对路径。
 
 ## 项目文档
 
@@ -356,4 +357,4 @@ docs/           # 设计、实施计划与修改说明
 - [实施计划](docs/Coding%20Agent%20实施计划.md)
 - [基础框架修改说明](docs/Coding%20Agent%20基础框架修改说明.md)
 
-`README.txt`、视频与提交压缩包属于 M7，当前没有生成正式提交材料；M5 可组合 TaskRun UX 已完成，M6 历史任务持久化与多轮会话仍是计划而非已有能力。
+`submit/README.txt` 属于 M7 正式提交材料；M5 可组合 TaskRun UX 与 M6 历史任务持久化、多轮会话均已实现。视频、压缩包和远程发布仍需按 M7 计划单独验收，不能由阶段记录替代。

@@ -42,8 +42,13 @@ async function main() {
     let deleted = false
 
     await page.route('**/api/meta', (route) => json(route, {
-      workspace: 'demo_workspace', mode: 'agent', agent_ready: true,
+      workspace: 'demo_workspace', workspace_path: 'D:\\Coding_Agent\\demo_workspace',
+      mode: 'agent', agent_ready: true,
       tools: ['read_file'], tool_statuses: { read_file: 'ready' },
+    }))
+    await page.route('**/api/workspaces', (route) => json(route, {
+      current: { name: 'demo_workspace', path: 'D:\\Coding_Agent\\demo_workspace' },
+      recent: [{ name: 'demo_workspace', path: 'D:\\Coding_Agent\\demo_workspace' }],
     }))
     await page.route('**/api/sessions?**', (route) => json(route, {
       items: deleted ? [] : [session(tasks.length)], next_cursor: null,

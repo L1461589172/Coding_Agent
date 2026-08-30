@@ -20,4 +20,6 @@ output/
 test-results/
 playwright-report/
 /.coding-agent/
-/.env.example
+/submit/introduce.md
+/submit/project_detail.md
+/submit/README.txt

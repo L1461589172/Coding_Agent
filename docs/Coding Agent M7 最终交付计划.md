@@ -8,6 +8,10 @@
 >
 > 目标：基于同一个候选提交完成可复现、无密钥、材料一致的最终交付，不在录屏后继续改变产品行为。
 
+> 2026-08-30 当前执行状态：基于 `83b0e69` 后的当前工作树，后端 288 passed / 1 warning、Ruff、pip check、前端 22 tests/typecheck/production build、隔离 API smoke、两个 Microsoft Edge browser smoke 均重新通过；M6 真实模型重启/多轮为 3/3 COMPLETED（31.906 秒，8 项检查全通过）。已恢复前端删除会话入口，更新旧 browser 选择器，并把被忽略且含本机配置的 `.env.example` 重建为可跟踪空值模板。脱敏扫描中工作树和可见 Git 历史常见 token 模式均为 0，当前 API Key 在 output/本地历史出现 0；`.env` 仍被忽略。`submit/README.txt` 已生成；视频、最终 commit/tag、压缩包、远程 SHA 与发布仍未执行，因此完整 M7 结论仍为 No-Go。
+
+> 本轮新增已知限制：Windows 未启用长路径支持时，过深的自定义 History 根目录叠加内部 fingerprint/UUID 文件名可超过旧式约 260 字符边界，首次持久化返回 503；默认目录和短路径隔离 smoke 正常。保留既有 Starlette TestClient/httpx 弃用 warning，POSIX 实机、日志脱敏和参考图像素级并排 QA 仍未完成。
+
 ## 1. 范围与原则
 
 M7 只做交付收口：
