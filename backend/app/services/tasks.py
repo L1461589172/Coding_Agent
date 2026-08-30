@@ -58,9 +58,13 @@ class TaskManager:
         self._job: asyncio.Task[None] | None = None
         self._create_lock = asyncio.Lock()
 
+    @property
+    def busy(self) -> bool:
+        return self._active is not None or self.repository.has_unfinished_task()
+
     async def create(self, prompt: str, session_id: str | None = None) -> Task:
         async with self._create_lock:
-            if self._active is not None or self.repository.has_unfinished_task():
+            if self.busy:
                 raise TaskBusy()
             task = Task(prompt=prompt, mode=self.mode)
             trace = ExecutionTrace()

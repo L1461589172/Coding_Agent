@@ -43,7 +43,7 @@
 
 退出标准：不经过模型，工具层测试全部通过；任何文件写入都能给出可审计结果。
 
-历史记录为 172 passed，随后复验发现 D001（171 passed / 1 failed）。M1 修复阶段达到 194 passed，M2 达到 242，M3 达到 246，M4 达到 248，M5 达到 254，M6 Phase 0–2 达到 276；M6 完成后当前全量为 281 passed。M4 的三轮真实模型验收仍有效；M6 多轮/重启真实 smoke 也为 3/3。POSIX 分支仍待实机验收。
+历史记录为 172 passed，随后复验发现 D001（171 passed / 1 failed）。M1 修复阶段达到 194 passed，M2 达到 242，M3 达到 246，M4 达到 248，M5 达到 254，M6 Phase 0–2 达到 276，M6 完成为 281；2026-08-30 接入前端 Workspace 切换后当前全量为 288 passed。M4 的三轮真实模型验收仍有效；M6 多轮/重启真实 smoke 也为 3/3。POSIX 分支仍待实机验收。
 
 ### M2：Agent Runtime（08-29）
 
@@ -129,7 +129,7 @@ M7 不实现 M6 功能。若 JSON format/migration、原子写/锁、重启收�
 
 | 层级 | 方法 | 必测内容 |
 |---|---|---|
-| 单元/工具集成 | pytest | Workspace、工具、LLM HTTP、上下文、事件、Agent Loop、M3 恢复、M4 Demo、M5 Trace/Summary、M6 Repository/migration/restart/context/API；当前为 281 passed |
+| 单元/工具集成 | pytest | Workspace、切换/回滚、工具、LLM HTTP、上下文、事件、Agent Loop、M3 恢复、M4 Demo、M5 Trace/Summary、M6 Repository/migration/restart/context/API；当前为 288 passed |
 | 无模型工具流程 | tests/test_shell_tools.py / test_command_bytecode.py | 真实写入、pytest 失败、替换与复验；固定时间戳旧缓存及重复执行验证 |
 | 组件 | Fake LLM | 调用 ID 回填、参数错误恢复、并行调用、预算裁剪、步数/重复停止和真实本地修复流程 |
 | API | FastAPI TestClient | 任务冲突、Session/follow-up/delete、游标分页、事件持久回放、服务重启与终态一致性 |

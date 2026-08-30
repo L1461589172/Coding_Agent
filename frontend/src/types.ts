@@ -190,10 +190,21 @@ export type CommandFinishedEvent = EventOf<'command_finished'>
 
 export interface Metadata {
   workspace: string
+  workspace_path: string
   mode: string
   agent_ready: boolean
   tools: string[]
   tool_statuses: Record<string, 'ready' | 'not_implemented'>
+}
+
+export interface WorkspaceInfo {
+  name: string
+  path: string
+}
+
+export interface WorkspaceState {
+  current: WorkspaceInfo
+  recent: WorkspaceInfo[]
 }
 
 const EVENT_TYPES = new Set<EventType>([
@@ -346,6 +357,7 @@ export function parseTaskPage(value: unknown): TaskPage {
 export function parseMetadata(value: unknown): Metadata {
   if (!isRecord(value)
     || !isString(value.workspace)
+    || !isString(value.workspace_path)
     || !isString(value.mode)
     || !isBoolean(value.agent_ready)
     || !Array.isArray(value.tools)
@@ -357,6 +369,25 @@ export function parseMetadata(value: unknown): Metadata {
     throw new Error('后端返回了无效的元数据')
   }
   return value as unknown as Metadata
+}
+
+function isWorkspaceInfo(value: unknown): value is WorkspaceInfo {
+  return isRecord(value)
+    && isString(value.name)
+    && value.name.length > 0
+    && isString(value.path)
+    && value.path.length > 0
+}
+
+export function parseWorkspaceState(value: unknown): WorkspaceState {
+  if (!isRecord(value)
+    || !isWorkspaceInfo(value.current)
+    || !Array.isArray(value.recent)
+    || value.recent.length > 10
+    || !value.recent.every(isWorkspaceInfo)) {
+    throw new Error('后端返回了无效的工作区数据')
+  }
+  return value as unknown as WorkspaceState
 }
 
 function validPayload(type: EventType, value: unknown): boolean {

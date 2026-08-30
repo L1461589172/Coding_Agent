@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseTask } from './types'
+import { parseTask, parseWorkspaceState } from './types'
 
 function payload() {
   return {
@@ -29,5 +29,23 @@ describe('parseTask summary contract', () => {
     const value = payload()
     mutate(value)
     expect(() => parseTask(value)).toThrow('无效的任务数据')
+  })
+})
+
+describe('parseWorkspaceState contract', () => {
+  it('accepts a bounded current and recent workspace list', () => {
+    const state = parseWorkspaceState({
+      current: { name: 'one', path: 'D:\\Projects\\one' },
+      recent: [
+        { name: 'one', path: 'D:\\Projects\\one' },
+        { name: 'two', path: 'D:\\Projects\\two' },
+      ],
+    })
+    expect(state.recent[1].name).toBe('two')
+  })
+
+  it('rejects malformed workspace data', () => {
+    expect(() => parseWorkspaceState({ current: { name: '', path: 'x' }, recent: [] }))
+      .toThrow('无效的工作区数据')
   })
 })

@@ -83,6 +83,8 @@ body {
 }
 
 button,
+input,
+select,
 textarea {
   font: inherit;
 }
@@ -118,6 +120,8 @@ button:hover:not(:disabled) {
 }
 
 button:focus-visible,
+input:focus-visible,
+select:focus-visible,
 textarea:focus-visible {
   outline: 2px solid #57b894;
   outline-offset: 3px;
@@ -890,6 +894,18 @@ footer {
   margin: 6px 0 10px;
 }
 
+.workspace-path {
+  overflow: hidden;
+
+  color: var(--text-muted);
+
+  font-family: Consolas, "SFMono-Regular", monospace;
+  font-size: 10px;
+
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .readiness {
   display: flex;
   align-items: center;
@@ -903,6 +919,78 @@ footer {
 
 .readiness.ready {
   color: var(--success);
+}
+
+.workspace-toggle {
+  width: 100%;
+
+  padding: 7px 0 0;
+
+  border: 0;
+
+  background: transparent;
+  color: var(--accent);
+
+  text-align: left;
+  font-size: 11px;
+}
+
+.workspace-toggle:hover:not(:disabled) {
+  background: transparent;
+  color: var(--accent-hover);
+}
+
+.workspace-switcher {
+  margin-top: 10px;
+
+  display: grid;
+
+  gap: 8px;
+}
+
+.workspace-switcher label {
+  color: var(--text-secondary);
+
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.workspace-switcher input,
+.workspace-switcher select {
+  width: 100%;
+  min-width: 0;
+
+  padding: 7px 8px;
+
+  border: 1px solid var(--border);
+  border-radius: 6px;
+
+  background: #ffffff;
+  color: var(--text-primary);
+
+  font-family: Consolas, "SFMono-Regular", monospace;
+  font-size: 10px;
+}
+
+.workspace-switcher select {
+  overflow: hidden;
+
+  text-overflow: ellipsis;
+}
+
+.workspace-switcher button {
+  width: 100%;
+
+  padding: 7px 9px;
+
+  font-size: 11px;
+}
+
+.workspace-switcher small {
+  color: var(--text-muted);
+
+  font-size: 9px;
+  line-height: 1.45;
 }
 
 .new-task-button {

@@ -1,6 +1,6 @@
 # 文档导航与当前代码状态
 
-更新日期：2026-08-29。M1–M6 已收口；M6 已完成 JSON HistoryRepository、Session/follow-up、有界多轮上下文、历史 UI、删除与资源治理；最终交付为 M7。
+更新日期：2026-08-30。M1–M6 已收口；此后已增加前端单活动 Workspace 安全切换、最近路径持久化与失败回滚；最终交付为 M7。
 
 ## 阅读顺序
 
@@ -34,6 +34,7 @@
 | M4 Demo | 初始失败的真实 Bug、可重复验收器、Prompt 调优；真实模型连续 3/3 成功 | 已完成；不外推为任意任务 100% 成功率 |
 | M5 UX | ConversationThread/TaskRun、`call_id` Activity 聚合、File/Command 附件、完整 Trace/Summary、版本化恢复与响应式/无障碍 | 已完成；历史持久化与 follow-up 仍属于 M6 |
 | M6 历史/多轮 | 项目内版本化 JSON、原子替换/单写锁、持久 Task/Event、durable replay、Session/follow-up API、确定性有界 TaskRecap、历史 UI、删除/容量/关闭 | 已完成；真实模型多轮/重启 smoke 3/3 |
+| Workspace 切换 | 前端绝对路径/最近列表；后端单活动资源图、任务阻断、历史隔离、失败回滚、Runtime/工具重绑定 | 已完成；不支持并行 Workspace 或磁盘扫描 |
 | M7 交付 | 开发说明与测试基础 | 待 M5/M6 完成后制作 README.txt、视频、密钥扫描与最终提交材料 |
 
 `/api/meta` 的六个 `tool_statuses` 均为 `ready`。模型三项配置完整时为 `agent_ready=true`、`mode=agent` 并运行真实 Loop；配置不完整时为 scaffold，任务以 `NOT_IMPLEMENTED` 结束且不执行工具。仍没有独立 HTTP 工具执行入口。
@@ -44,10 +45,10 @@
 
 | 检查 | 结果 |
 |---|---|
-| 源码清单 | 后端 39 个 Python 文件；前端 `src` 28 个文件；17 个测试模块和 conftest.py；M4 与 browser 验收脚本各 1 个 |
-| pytest 收集/全量复验 | **281 passed, 1 warning** |
+| 源码清单 | 后端 42 个 Python 文件；前端 `src` 28 个文件；17 个测试模块和 conftest.py；M4 与 browser 验收脚本各 1 个 |
+| pytest 收集/全量复验 | **288 passed, 1 warning** |
 | M6 Phase 3–7 定向复验 | Session/API/context/retention 30 passed；Ruff lint/format 全通过 |
-| 前端 | 20 passed；严格类型、生产构建与 M6 browser smoke 通过 |
+| 前端 | 22 passed；严格类型与生产构建通过；M6 browser smoke 保留 2026-08-29 历史证据 |
 | M6 真实模型 smoke | 3/3 COMPLETED；重启恢复与 8 项检查全部通过，34.688 秒 |
 | M5 后真实模型 | 新的连续 3/3；平均 12.240 秒，Agent/独立 pytest 均为 2 passed，Summary 三项检查均通过 |
 | M3 API/UI 契约 | 新增 4 项：断线回放、大载荷、服务重启、成功/失败终态一致性 |
@@ -56,10 +57,10 @@
 | D001 历史全量复验 | 连续三轮各 194 passed, 1 warning；见 [D001 修复说明](Coding%20Agent%20D001%20修复说明.md#4-验证记录) |
 | D001 针对性验证 | 新增 22 项 + 原无模型流程，共 23 passed；固定 mtime、等长修改、真实旧缓存与连续调用 |
 | Ruff | 全项目 lint 与 format check 无缓存检查通过 |
-| 前端单测/类型/构建 | Vitest 4 files / 20 tests；`vue-tsc --noEmit`；Vite 33 modules、93.60 kB JS，全部通过 |
+| 前端单测/类型/构建 | Vitest 4 files / 22 tests；`vue-tsc --noEmit`；Vite 33 modules，全部通过 |
 | 浏览器 smoke | Playwright/Edge 已实测 failed/running/completed、附件、刷新、410/404/204、focus 与 390px |
 
-已有的 Starlette TestClient/httpx 弃用警告保留，未为消除它升级依赖。历史阶段数字均保留原意；当前后端结论基于 M6 完成后的 281 项 Python 测试。本轮重新执行了前端测试/类型/构建、M6 browser smoke 和真实多轮 smoke。
+已有的 Starlette TestClient/httpx 弃用警告保留，未为消除它升级依赖。历史阶段数字均保留原意；当前结论基于 Workspace 切换接入后的 288 项 Python 测试和 22 项前端测试。本轮未重跑 browser 或真实模型 smoke。
 
 ## 如何复验
 

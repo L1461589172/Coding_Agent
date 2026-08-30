@@ -15,6 +15,8 @@ import {
   getSessionTasks,
   getSessions,
   getTask,
+  getWorkspaces,
+  switchWorkspace,
   watchTask,
 } from './api/client'
 
@@ -44,6 +46,7 @@ import type {
   Metadata,
   SessionListItem,
   Task,
+  WorkspaceState,
 } from './types'
 
 
@@ -52,6 +55,8 @@ import type {
    ========================================================= */
 
 const metadata = ref<Metadata | null>(null)
+const workspaceState = ref<WorkspaceState | null>(null)
+const workspaceSwitching = ref(false)
 
 const sessions = ref<SessionListItem[]>([])
 const sessionsCursor = ref<string | null>(null)
@@ -231,6 +236,72 @@ async function loadMetadata() {
 
     error.value =
       '无法连接后端，请启动 coding-agent 并检查代理端口。'
+  }
+}
+
+async function loadWorkspaces() {
+  try {
+    workspaceState.value = await getWorkspaces()
+  } catch (cause) {
+    workspaceState.value = null
+    error.value = cause instanceof Error ? cause.message : '加载工作区失败'
+  }
+}
+
+async function reconnectBackend() {
+  await Promise.all([
+    loadMetadata(),
+    loadWorkspaces(),
+    loadSessions(),
+  ])
+}
+
+function closeAllStreams() {
+  closeActiveStream?.()
+  closeActiveStream = undefined
+  for (const close of historicalStreams.values()) close()
+  historicalStreams.clear()
+  connected.value = false
+}
+
+async function changeWorkspace(path: string) {
+  if (active.value || workspaceSwitching.value) return
+  workspaceSwitching.value = true
+  error.value = ''
+  notice.value = ''
+  try {
+    const switched = await switchWorkspace(path)
+    closeAllStreams()
+    workspaceState.value = switched
+    selectedSessionId.value = null
+    selectedTasks.value = []
+    tasksBeforeOrdinal.value = null
+    taskEvents.value = {}
+    incompleteWindows.value = new Set()
+    loadingActivity.value = new Set()
+    expandedActivity.value = new Set()
+    activeTask.value = null
+    sessions.value = []
+    sessionsCursor.value = null
+    saveRecentContext(null)
+    updateUrl(null, true)
+    await Promise.all([
+      loadMetadata(),
+      loadSessions(),
+    ])
+    notice.value = `已切换到工作区：${switched.current.name}`
+  } catch (cause) {
+    if (cause instanceof ApiError && cause.status === 409) {
+      error.value = '当前仍有任务正在运行，请等待任务结束后再切换工作区。'
+    } else if (cause instanceof ApiError && cause.status === 400) {
+      error.value = '工作区必须是本机已存在的绝对目录。'
+    } else if (cause instanceof ApiError && cause.status === 503) {
+      error.value = '新工作区无法打开，已保留原工作区。'
+    } else {
+      error.value = cause instanceof Error ? cause.message : '切换工作区失败'
+    }
+  } finally {
+    workspaceSwitching.value = false
   }
 }
 
@@ -649,7 +720,8 @@ async function submit(
   if (
     submitting.value ||
     checking.value ||
-    active.value
+    active.value ||
+    workspaceSwitching.value
   ) {
     return
   }
@@ -871,6 +943,7 @@ onMounted(async () => {
 
   await Promise.all([
     loadMetadata(),
+    loadWorkspaces(),
     loadSessions(),
   ])
 
@@ -894,14 +967,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  closeActiveStream?.()
-
-  for (
-    const close
-    of historicalStreams.values()
-  ) {
-    close()
-  }
+  closeAllStreams()
 
   window.removeEventListener(
     'popstate',
@@ -919,8 +985,17 @@ onBeforeUnmount(() => {
 
     <Sidebar
       :metadata="metadata"
-      :disabled="active"
+      :disabled="
+        active ||
+        sessionsLoading ||
+        restoring ||
+        submitting ||
+        checking ||
+        workspaceSwitching
+      "
       :history-items="sessions"
+      :workspace-state="workspaceState"
+      :workspace-switching="workspaceSwitching"
 
       :selected-id="
         selectedSessionId ??
@@ -940,7 +1015,11 @@ onBeforeUnmount(() => {
       "
 
       @reconnect="
-        loadMetadata
+        reconnectBackend
+      "
+
+      @switch-workspace="
+        changeWorkspace
       "
 
       @select="
@@ -1129,6 +1208,7 @@ onBeforeUnmount(() => {
           submitting ||
           checking ||
           restoring ||
+          workspaceSwitching ||
           active ||
           !metadata
         "

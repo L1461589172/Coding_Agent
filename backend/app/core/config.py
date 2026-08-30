@@ -3,6 +3,8 @@ from math import isfinite
 from os import environ
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 APPLICATION_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -98,6 +100,9 @@ class Settings:
 
     @classmethod
     def from_env(cls, workspace: str | None = None, port: int = 8000) -> "Settings":
+        # Use an explicit path so startup behavior is independent of the caller's cwd.
+        # Explicit process variables retain precedence over local development defaults.
+        load_dotenv(APPLICATION_ROOT / ".env", override=False, encoding="utf-8")
         history_dir = environ.get("CODING_AGENT_HISTORY_DIR", "").strip()
         return cls(
             workspace=Path(workspace or environ.get("CODING_AGENT_WORKSPACE", ".")),

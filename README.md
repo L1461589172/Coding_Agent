@@ -73,6 +73,8 @@ Set-Location 'D:\Coding_Agent'
 
 工作区必须存在；程序不会自动创建它。无需把目标项目复制进本仓库，也不建议把整个磁盘或用户主目录作为工作区。
 
+后端启动后，可在前端左侧“工作区”卡片中输入另一个本机绝对目录，或从最近使用列表选择并切换。切换仅在没有活动任务时允许；成功后工具、Agent Runtime 和历史仓库都会绑定到新目录，旧事件流与会话选择会被清理。不同工作区的历史按路径指纹隔离，切回原目录即可恢复原会话。最近路径保存在 `/.coding-agent/history/workspaces.json`，只作本机导航提示，不扫描磁盘。
+
 ### 4. 启动前端（终端 B）
 
 ```powershell
@@ -121,9 +123,9 @@ Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health'
 
 ### 配置规则
 
-后端仅从启动进程的环境变量读取配置，**不会自动读取仓库根目录的 `.env` 文件**。`.env.example` 只用于说明配置项，复制为 `.env` 并不会使配置生效。
+后端启动时会自动读取仓库根目录的 `.env` 文件；可复制 `.env.example` 为 `.env` 后填写本机配置。读取位置固定为仓库根目录，不受启动命令当前目录影响。终端中已经显式设置的同名环境变量优先于 `.env`，修改任一配置后都需重启后端。
 
-在对应服务的终端中设置 `$env:变量名` 后再启动服务；这些设置作用于该终端及其子进程，不会自动共享给另一个终端。修改后需重启对应服务。
+`.env` 已被 Git 忽略，仅供后端进程读取，不会注入浏览器。不要提交、回显或在截图中暴露其中的 API Key。
 
 | 变量 | 默认值 | 设置位置与作用 | 当前状态 |
 |---|---|---|---|
@@ -265,7 +267,7 @@ $pytestRunDir = Join-Path $env:TEMP ("coding-agent-pytest-" + [guid]::NewGuid().
 
 按实际克隆位置调整上述绝对路径。pytest 会清空 `--basetemp`：必须使用新建的专用随机路径，不能指定项目根目录或已有数据目录。脚本不删除旧测试目录；运行记录保留在系统临时目录，便于检查失败样例。
 
-当前在 Windows/Python 3.12 下后端全量 **281 项确定性测试通过**，Ruff lint/format 通过；前端 **20 passed**、严格类型、生产构建和 M6 browser smoke 通过。2026-08-29 经授权执行 M6 真实模型三轮多轮/重启 smoke：3/3 COMPLETED，ordinal 1→2→3，重启恢复、两轮 follow-up 重新读文件并运行 pytest、API Key 不进入历史等 8 项检查全部通过，总耗时 34.688 秒。M4 独立真实模型 Demo 的历史证据仍为 3/3，本轮未重复产生该组费用。保留既有 Starlette/httpx 弃用提示。
+当前在 Windows/Python 3.12 下后端全量 **288 项确定性测试通过**，Ruff lint/format 通过；前端 **22 passed**、严格类型和生产构建通过。Workspace 切换覆盖历史隔离、最近路径重启恢复、活动任务阻断、打开/关闭失败回滚及 Runtime/工具重绑定。2026-08-29 的 M6 browser smoke、真实模型三轮多轮/重启 smoke 3/3，以及 M4 独立真实模型 Demo 3/3 仍作为历史证据；本轮未重复产生真实模型费用。保留既有 Starlette/httpx 弃用提示。
 
 三类机制应分开处理：`--basetemp` 隔离 pytest 临时目录及账户权限；`cache_dir` 管理 pytest 状态缓存；Python/pytest 字节码则由 `run_command` 为每次命令设置独立 `PYTHONPYCACHEPREFIX` 并禁写常规字节码。修复不删除工作区已有 `.pyc`，也不要求手动清缓存。该策略只作用于工具命令，不接管用户手动启动的 Python。
 
@@ -292,7 +294,7 @@ npm.cmd run build
 | 页面显示无法连接后端 | 先检查 `/health`；确认两个服务都在运行，且前端代理地址与后端端口一致 |
 | 8000 或 5173 端口已占用 | 检查是否重复启动；停止自己此前启动的服务，或按上文修改后端端口；不要直接结束未知进程 |
 | 通过局域网 IP 访问失败 | 当前仅允许本机访问，请使用 `127.0.0.1` 或 `localhost`，不要改成公网服务 |
-| 修改 `.env` 后没有生效 | 后端不自动加载它；在后端终端设置环境变量并重启 |
+| 修改 `.env` 后没有生效 | 确认文件位于仓库根目录、变量名正确并重启后端；终端中已设置的同名变量会覆盖 `.env` |
 | 任务返回 `NOT_IMPLEMENTED` | API Key、Base URL、模型名至少一项为空；三项都设置后重启服务并检查 `/health` |
 | pytest 只有 6 项通过，其余在 tmp_path 初始化报权限错误 | 使用 `scripts/test.ps1` 或上面的随机 `--basetemp` / `cache_dir` 命令，避免不同账户共用临时目录与缓存 |
 | pytest 提示 `.pytest_cache` 无法写入 | 使用脚本的独立 `cache_dir`；这是 pytest 状态缓存权限，不是 Python `.pyc` |
@@ -309,7 +311,7 @@ backend/app/
   agent/        # Runtime/LLM 协议、Conversation、StopController
   core/         # Settings 与 EventLog
   models/       # Task、Event 模型
-  services/     # 单活动任务管理与生命周期
+  services/     # 单活动任务管理、Workspace 原子切换与生命周期
   tools/        # Workspace 守卫、六个工具、原子写入/Diff、命令策略与进程管理
   cli.py        # coding-agent 命令
   main.py       # FastAPI 应用工厂
@@ -322,7 +324,7 @@ docs/           # 设计、实施计划与修改说明
 
 ## 当前边界
 
-- 运行态仍是全局单活动 Task；历史事实由项目内 JSON Repository 保存，正常重启不会清空。format v1 默认最多 200 Session、每 Session 100 Task，达到容量或总字节上限时拒绝新写入。
+- 运行态仍是全局单活动 Task、单活动 Workspace；页面可以在已有绝对目录间切换，但不并行运行多个 Workspace。历史事实由项目内 JSON Repository 保存，正常重启不会清空。format v1 默认最多 200 Session、每 Session 100 Task，达到容量或总字节上限时拒绝新写入。
 - TaskManager 仅适用于单进程、单 event loop；不要使用多 worker 部署。
 - Workspace 已拒绝越界、常见敏感路径、链接/reparse point、硬链接及 Windows 设备/短名称等歧义路径，但不是 OS 沙箱，不能消除所有并发文件系统竞争。
 - 六个工具均已实现，可独立调用；写入只接受受限大小的 UTF-8 普通文件，替换必须唯一匹配。详细参数、错误码和示例见 M1 完成说明。

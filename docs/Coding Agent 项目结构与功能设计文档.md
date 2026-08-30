@@ -14,7 +14,7 @@
 
 1. 将交付目标从“完整 Coding Agent 产品”收敛为“可稳定演示一个真实任务的 MVP”。
 2. P0 只保留评分核心：原生 tool calling、自研 Agent Loop、上下文管理、工具本地执行、循环终止、错误恢复、过程展示。
-3. 运行模型固定为单用户、单进程、单 Workspace、同一时刻最多一个任务；持久化、多任务并发、历史记录和取消留到 P2。
+3. 运行模型固定为单用户、单进程、单活动 Workspace、同一时刻最多一个任务；前端可在任务空闲时切换已有绝对目录，但不并行运行多个 Workspace。
 4. 前端 P0 仅实现任务输入、状态、时间线、工具调用/结果、命令输出和最终总结；文件树、代码查看器和高级 Diff 降为 P1。
 5. 明确安全能力边界：文件工具可通过路径解析约束在 Workspace 内；普通本地 Shell 仅能做到工作目录、超时和危险命令拦截，不能等同于 OS 级沙箱。
 6. 模型调用只使用模型厂商 API 或 OpenAI 兼容 API 的原生 tool calling，不引入任何 Agent 框架/SDK，也不依赖云端代码执行或文件工具。
@@ -87,7 +87,7 @@ FastAPI API
 
 1. 将 Workspace 解析为真实绝对路径并确认存在且为目录。
 2. 从环境变量读取 `CODING_AGENT_API_KEY`、`CODING_AGENT_BASE_URL`、`CODING_AGENT_MODEL`。
-3. 创建单例 Workspace、TaskManager、EventBus 和 AgentRuntime。
+3. 创建单活动 Workspace 的工具、TaskManager、EventBus 和 AgentRuntime；切换时按同一资源生命周期安全关闭、打开和回滚。
 4. 启动 Uvicorn；浏览器自动打开属于 P1。
 
 API Key 不得写入代码、README、日志、事件或前端响应。
@@ -203,6 +203,8 @@ Conversation 保存本任务的完整逻辑消息：system、user、assistant、
 | `GET` | `/api/tasks/{task_id}` | 查询任务状态与最终结果 |
 | `GET` | `/api/tasks/{task_id}/events` | SSE 事件流，先回放后订阅 |
 | `GET` | `/api/meta` | 已实现：工作区名称、六工具名称/状态及实际 agent/scaffold 模式 |
+| `GET` | `/api/workspaces` | 当前与最近使用的工作区绝对路径列表，不扫描磁盘 |
+| `POST` | `/api/workspaces/switch` | 空闲时原子切换已有绝对目录；活动任务返回 409，失败保留原工作区 |
 | `GET` | `/api/workspace/tree` | P1 规划，尚无路由，当前 404 |
 | `GET` | `/api/workspace/file?path=...` | P1 规划，尚无路由，当前 404 |
 | `GET` | `/health` | 健康检查 |
@@ -357,13 +359,15 @@ backend/app/
 | 文件 | 功能简介 | 已实现的部分 | 待实现的部分 |
 |---|---|---|---|
 | [cli.py](../backend/app/cli.py) | 命令行入口 | 解析必填 Workspace 和 `--port`；读取配置、创建应用；固定本机地址、单 worker 启动 Uvicorn | 自动打开浏览器属于 P1；目前无多 worker、远程监听或自动重载选项 |
-| [main.py](../backend/app/main.py) | 应用工厂与依赖组装 | 创建 Workspace/Registry；配置完整时创建 LLM/AgentRuntime；动态 mode/ready；先关闭任务再关闭模型；注入测试 Runner 时不创建无用客户端 | Vue 静态产物托管；现有中间件不等于身份认证或系统沙箱 |
-| [api/routes.py](../backend/app/api/routes.py) | HTTP API 层 | 元数据、任务创建/查询、SSE；409/404/503 错误；游标检查、历史续传与终态 204 | 文件树/文件读取 API；不在本阶段的取消/历史/重试接口尚不存在 |
-| [core/config.py](../backend/app/core/config.py) | 集中配置 | 模型请求/连接/重试、字符/token/结果/轮次预算、max_steps、工作区/端口/Origin；三项模型配置就绪判断；密钥不进 repr | 部分模型配置当前按 scaffold 降级而非报错；不会自动加载 `.env` |
+| [main.py](../backend/app/main.py) | 应用工厂与依赖组装 | 由 WorkspaceService 创建和关闭当前资源图；动态 mode/ready；注入测试 Runner 时不创建无用客户端 | Vue 静态产物托管；现有中间件不等于身份认证或系统沙箱 |
+| [api/routes.py](../backend/app/api/routes.py) | HTTP API 层 | 元数据、Workspace 查询/切换、任务创建/查询、SSE；409/404/503 错误；游标检查、历史续传与终态 204 | 文件树/文件读取 API；取消和重试接口尚不存在 |
+| [core/config.py](../backend/app/core/config.py) | 集中配置 | 模型请求/连接/重试、字符/token/结果/轮次预算、max_steps、工作区/端口/Origin；三项模型配置就绪判断；密钥不进 repr | 部分模型配置当前按 scaffold 降级而非报错；启动时加载根目录 `.env`，进程环境变量优先 |
 | [core/events.py](../backend/app/core/events.py) | 事件存储和订阅 | 每任务 EventLog、单调 ID、Condition 通知、回放/等待、心跳、终态关闭；单 payload、历史字符与事件数上限；过期游标判断 | 完整敏感内容识别与持久化不在本阶段 |
 | [models/task.py](../backend/app/models/task.py) | 任务数据模型 | TaskCreate 输入长度/空白/额外字段检查；四种状态、UUID、时间、结果、结构化错误与 scaffold 模式 | 真实步骤、验证结果、修改文件清单等字段；没有 CANCELLED 状态 |
 | [models/event.py](../backend/app/models/event.py) | 事件信封与编码 | 8 种事件名称、终态集合、时间/step/payload 字段；`as_sse()` 生成 ID 与单行 JSON | 各事件 payload 的专用模型、真实工具事件数据；SSE 编码位于此文件而非 events.py |
+| [models/workspace.py](../backend/app/models/workspace.py) | Workspace API 模型 | 严格切换请求、当前/最近路径响应与数量/长度上限 | 不承载目录树或远程 Workspace |
 | [services/tasks.py](../backend/app/services/tasks.py) | 任务生命周期 | 单活动任务、后台协程、默认 100 任务上限；agent/scaffold mode；Runtime 结构化错误、终态事件与关闭清理 | 持久化、用户取消和重试接口不在当前范围 |
+| [services/workspaces.py](../backend/app/services/workspaces.py) | 工作区生命周期 | 单活动 Workspace 资源图；最近路径 JSON；任务空闲检查；切换串行化、失败回滚、历史/Runtime/LLM 关闭与重建 | 多 Workspace 并行执行与磁盘目录浏览不在范围 |
 
 #### Agent 与工具模块
 
@@ -458,7 +462,7 @@ TaskManager / Runtime -> core/events.py（EventLog）
 |---|---|---|
 | [pyproject.toml](../pyproject.toml) | Python 打包、coding-agent 入口、运行/开发依赖、pytest/Ruff 配置 | 真实功能所需依赖在对应阶段补充；不引入 Agent SDK |
 | [constraints.txt](../constraints.txt) | Python 已验证依赖快照 | 依赖升级后重新验证并维护 |
-| [.env.example](../.env.example) | 基础环境变量示例，不含真实密钥 | 不会自动加载；完整模型策略变量见根 README |
+| [.env.example](../.env.example) | 基础环境变量示例，不含真实密钥 | 复制为根目录 `.env` 后由后端启动时自动加载；完整模型策略变量见根 README |
 | [.gitignore](../.gitignore) | 忽略环境、依赖、缓存、密钥配置和 QA 产物 | 不提供运行时安全隔离 |
 | [tests/conftest.py](../tests/conftest.py) | 临时 Workspace 与隔离的 API 测试客户端 | 后续测试 fixture 扩展 |
 | [tests/test_api.py](../tests/test_api.py) | 请求校验、状态、SSE 回放、Host/Origin、409/503、异常不透出、关闭行为 | 真实工具/API 集成和长期断线恢复验收 |
@@ -554,18 +558,18 @@ M6 只纳入项目内 JSON 文件形式的本地单用户 Session/Task/Event 持
 
 这个范围既满足题目对“编程智能体”的定义，也把时间投入集中在评委会追问的部分：Agent 为什么这样运行、每一步由谁决定、工具如何落地、错误怎样反馈、循环为何会停止。
 
-## 13. 当前实现状态（2026-08-29，M6 已完成）
+## 13. 当前实现状态（2026-08-30，M6 后已增加 Workspace 切换）
 
 功能设计章节描述目标，不代表全部完成；第 9 节与本节描述当前实现。Agent 编程闭环同时具有 Fake LLM 确定性证据和固定 Bug 的真实模型三轮证据。
 
 - 启动：`coding-agent <workspace>` 已可用，固定监听 `127.0.0.1`、单 worker；Vue 独立启动于 5173。
-- API：实现 `/health`、`/api/meta`、创建/查询任务、任务 SSE；文件树和文件读取 API 尚未实现。
+- API：实现 `/health`、`/api/meta`、Workspace 查询/切换、创建/查询任务、任务 SSE；文件树和文件读取 API 尚未实现。
 - 状态：三项模型配置完整时进入 agent 模式并执行真实 Loop；配置不全时明确以 `FAILED / NOT_IMPLEMENTED` 结束且不操作工作区。
 - 工具：六种协议均已注册并绑定工作区，Runtime 通过原有 Schema/Registry 调用；结果按调用 ID 和顺序回填模型。
 - 只读边界：UTF-8 普通文件、固定忽略规则、拒绝链接、资源预算及截断元数据已实现；不是并发对抗环境下的强沙箱。
 - LLM：OpenAI-compatible 客户端已通过真实供应商联网验收；严格响应/tool call 校验、有限重试与资源关闭继续由确定性测试覆盖。
 - 写入与命令：UTF-8 原子写入、唯一替换、Diff/哈希、精简环境、命令白名单、超时/输出预算/回收已实现；不代表命令内脚本被沙箱隔离。
-- 最新复验：后端全量 281 passed，Ruff lint/format 通过；前端 20 项 Vitest、严格类型、生产构建与 M6 browser smoke 通过。M6 真实模型多轮/重启 smoke 3/3 COMPLETED、8 项检查全过；M4 三轮 3/3 保留为历史证据。
+- 最新复验：后端全量 288 passed，Ruff lint/format 通过；前端 22 项 Vitest、严格类型与生产构建通过。M6 browser/真实模型多轮及 M4 三轮结果保留为 2026-08-29 历史证据，本轮未重复产生模型费用。
 - D001：每命令新建 PYTHONPYCACHEPREFIX 并固定禁写字节码，普通 Python 子进程继承；不删除工作区已有缓存，命令结束后清理本次目录。该策略增加冷导入开销，也不是对主动覆盖环境或 sys.modules 热重载的保证。
 - 上下文与终止：字符/估算 token 双总预算计入工具 Schema；最近完整轮次、模型侧结果裁剪、决策轮/重复停止及连续 LLM/Runtime/命令超时阈值均已接入。
 - EventBus 在代码中以每任务 `EventLog` 实现。事件 `id` 是任务内单调递增数字字符串，用于 `Last-Event-ID` / `after` 续传；历史有体积/数量上限，过期游标返回 410，终态已读完返回 204。

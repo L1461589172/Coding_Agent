@@ -5,12 +5,14 @@ import {
   parseSessionPage,
   parseTask,
   parseTaskPage,
+  parseWorkspaceState,
   type AgentEvent,
   type Metadata,
   type SessionListItem,
   type SessionPage,
   type Task,
   type TaskPage,
+  type WorkspaceState,
 } from '../types'
 
 export class ApiError extends Error {
@@ -38,6 +40,15 @@ async function request<T>(
 }
 
 export const getMetadata = (): Promise<Metadata> => request('/api/meta', parseMetadata)
+export const getWorkspaces = (): Promise<WorkspaceState> => request(
+  '/api/workspaces',
+  parseWorkspaceState,
+)
+export const switchWorkspace = (path: string): Promise<WorkspaceState> => request(
+  '/api/workspaces/switch',
+  parseWorkspaceState,
+  { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path }) },
+)
 export const getTask = (id: string): Promise<Task> => request(
   `/api/tasks/${encodeURIComponent(id)}`,
   parseTask,

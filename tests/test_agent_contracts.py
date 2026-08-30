@@ -4,6 +4,7 @@ import pytest
 from app.agent.context import Conversation
 from app.agent.runtime import SYSTEM_PROMPT
 from app.agent.stop import StopController
+from app.core import config as config_module
 from app.core.config import Settings
 from app.tools.base import ToolResult
 from app.tools.registry import create_registry
@@ -50,6 +51,7 @@ def test_config_does_not_repr_secret(tmp_path):
 
 
 def test_model_policy_settings_from_env(tmp_path, monkeypatch):
+    monkeypatch.setattr(config_module, "APPLICATION_ROOT", tmp_path)
     monkeypatch.setenv("CODING_AGENT_API_KEY", "environment-secret")
     monkeypatch.setenv("CODING_AGENT_BASE_URL", "https://model.example/v1")
     monkeypatch.setenv("CODING_AGENT_MODEL", "test-model")
@@ -84,6 +86,38 @@ def test_model_policy_settings_from_env(tmp_path, monkeypatch):
     assert settings.max_consecutive_command_timeouts == 5
     assert settings.model_configured
     assert "environment-secret" not in repr(settings)
+
+
+def test_settings_automatically_loads_project_dotenv(tmp_path, monkeypatch):
+    for name in (
+        "CODING_AGENT_API_KEY",
+        "CODING_AGENT_BASE_URL",
+        "CODING_AGENT_MODEL",
+        "CODING_AGENT_MAX_STEPS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(config_module, "APPLICATION_ROOT", tmp_path)
+    (tmp_path / ".env").write_text(
+        "\n".join(
+            (
+                "CODING_AGENT_API_KEY=dotenv-secret",
+                "CODING_AGENT_BASE_URL=https://dotenv.example/v1",
+                "CODING_AGENT_MODEL=dotenv-model",
+                "CODING_AGENT_MAX_STEPS=17",
+            )
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODING_AGENT_MODEL", "process-model")
+
+    settings = Settings.from_env(str(tmp_path))
+
+    assert settings.api_key == "dotenv-secret"
+    assert settings.base_url == "https://dotenv.example/v1"
+    assert settings.model == "process-model"
+    assert settings.max_steps == 17
+    assert settings.model_configured
+    assert "dotenv-secret" not in repr(settings)
 
 
 def test_repeat_and_step_limit():
