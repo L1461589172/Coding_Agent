@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { PhCheckCircle, PhXCircle } from '@phosphor-icons/vue'
+
 import type { Task } from '../types'
 
 defineProps<{ task: Task }>()
@@ -13,14 +15,11 @@ function duration(milliseconds: number | null | undefined): string {
 <template>
   <section class="task-summary" :class="task.status.toLowerCase()" aria-labelledby="summary-title">
     <div class="summary-heading">
-      <div>
-        <span class="eyebrow">任务结果</span>
-        <h3 id="summary-title">{{ task.status === 'COMPLETED' ? '已完成' : '任务未完成' }}</h3>
-      </div>
-      <span class="summary-status">{{ task.status }}</span>
+      <PhCheckCircle v-if="task.status === 'COMPLETED'" :size="19" weight="fill" aria-hidden="true" />
+      <PhXCircle v-else :size="19" weight="fill" aria-hidden="true" />
+      <strong id="summary-title">{{ task.status === 'COMPLETED' ? '任务已完成' : '任务未完成' }}</strong>
     </div>
     <div v-if="task.result" class="summary-narrative">
-      <span class="summary-label">Agent 回复</span>
       <p>{{ task.result }}</p>
     </div>
     <div v-if="task.error" class="summary-error" role="status">
@@ -38,7 +37,11 @@ function duration(milliseconds: number | null | undefined): string {
       </div>
       <div v-if="task.summary.verification" class="verification"
         :class="task.summary.verification.passed ? 'passed' : 'failed'">
-        <strong>{{ task.summary.verification.passed ? '✓ 测试通过' : '✕ 测试未通过' }}</strong>
+        <strong>
+          <PhCheckCircle v-if="task.summary.verification.passed" :size="17" weight="fill" aria-hidden="true" />
+          <PhXCircle v-else :size="17" weight="fill" aria-hidden="true" />
+          {{ task.summary.verification.passed ? '测试通过' : '测试未通过' }}
+        </strong>
         <code>{{ task.summary.verification.command }}</code>
         <span>exit {{ task.summary.verification.exit_code ?? '—' }}</span>
         <details v-if="task.summary.verification.output_excerpt">
@@ -51,7 +54,8 @@ function duration(milliseconds: number | null | undefined): string {
         <span class="summary-label">执行命令</span>
         <ul class="command-summary-list">
           <li v-for="(command, index) in task.summary.commands" :key="`${index}:${command.command}`">
-            <span :class="command.ok ? 'ok-mark' : 'error-mark'">{{ command.ok ? '✓' : '✕' }}</span>
+            <PhCheckCircle v-if="command.ok" class="ok-mark" :size="16" weight="fill" aria-hidden="true" />
+            <PhXCircle v-else class="error-mark" :size="16" weight="fill" aria-hidden="true" />
             <code>{{ command.command }}</code>
           </li>
         </ul>

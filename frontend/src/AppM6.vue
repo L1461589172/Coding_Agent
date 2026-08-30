@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { PhCaretDown } from '@phosphor-icons/vue'
 import {
   computed,
   nextTick,
@@ -1037,6 +1038,14 @@ onBeforeUnmount(() => {
          ===================================================== -->
 
     <main class="agent-workspace">
+
+      <header class="workspace-topbar">
+        <div class="workspace-topbar-content">
+          <span>工作区：</span>
+          <strong>{{ metadata?.workspace || '等待连接' }}</strong>
+          <PhCaretDown :size="15" weight="bold" aria-hidden="true" />
+        </div>
+      </header>
 
       <!-- ===================================================
            Missing model configuration

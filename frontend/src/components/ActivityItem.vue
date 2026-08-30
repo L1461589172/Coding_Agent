@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { PhCheck, PhCircleNotch, PhWarningCircle } from '@phosphor-icons/vue'
 import { computed } from 'vue'
 import { formatToolActivity } from '../formatters/toolActivity'
 import type { ToolActivityThreadItem } from '../thread/types'
@@ -15,7 +16,9 @@ const statusLabels = {
 <template>
   <article class="activity-item" :class="`activity-${presentation.status}`">
     <div class="activity-icon" aria-hidden="true">
-      {{ presentation.status === 'running' ? '…' : presentation.status === 'success' ? '✓' : '!' }}
+      <PhCircleNotch v-if="presentation.status === 'running'" :size="16" />
+      <PhCheck v-else-if="presentation.status === 'success'" :size="16" weight="bold" />
+      <PhWarningCircle v-else :size="16" weight="fill" />
     </div>
     <div class="activity-body">
       <div class="activity-heading">

@@ -1,4 +1,10 @@
 <script setup lang="ts">
+import {
+  PhCaretDown,
+  PhCaretRight,
+  PhCircleNotch,
+  PhRobot,
+} from '@phosphor-icons/vue'
 import { computed } from 'vue'
 
 import type {
@@ -86,12 +92,13 @@ const emit = defineEmits<{
 /*
  * 普通对话区域。
  */
-const normalItems = computed(() => {
-  return props.run.items.filter(
-    (item) =>
-      item.kind !== 'activity',
-  )
-})
+const userItem = computed(() => props.run.items.find((item) => item.kind === 'user'))
+
+const responseItems = computed(() => props.run.items.filter(
+  (item) => item.kind === 'agent' || item.kind === 'recovery',
+))
+
+const terminalItem = computed(() => props.run.items.find((item) => item.kind === 'terminal'))
 
 
 /*
@@ -134,235 +141,92 @@ const activityButtonText = computed(() => {
 
   return '查看执行详情'
 })
+
+function shortTime(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  return date.toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+}
 </script>
 
 
 <template>
-  <section
-    class="task-run"
-    :aria-label="`任务 ${run.taskId.slice(0, 8)}`"
-  >
-    <!-- ===================================================
-         Task Header
-         =================================================== -->
+  <section class="task-run" :aria-label="`任务 ${run.taskId.slice(0, 8)}`">
+    <article v-if="userItem?.kind === 'user'" class="user-turn">
+      <div class="user-message">
+        <time :datetime="userItem.timestamp">{{ shortTime(userItem.timestamp) }}</time>
+        <p>{{ userItem.prompt }}</p>
+      </div>
+      <span class="user-avatar" aria-label="你">你</span>
+    </article>
 
-    <header class="task-run-header">
-      <span>
-        Task {{ run.taskId.slice(0, 8) }}
+    <article class="agent-turn">
+      <span class="agent-avatar" aria-hidden="true">
+        <PhRobot :size="21" weight="duotone" />
       </span>
 
-      <span
-        class="run-status"
-        :class="run.status.toLowerCase()"
-      >
-        {{ run.status }}
-      </span>
-    </header>
+      <div class="agent-response">
+        <header class="agent-response-heading">
+          <strong>Coding Agent</strong>
+          <time :datetime="run.createdAt">{{ shortTime(run.createdAt) }}</time>
+        </header>
 
+        <p v-if="!run.eventWindowComplete" class="history-window-note" role="status">
+          较早的活动事件已过期；当前展示服务器仍保留的执行记录，任务总结仍然完整。
+        </p>
 
-    <!-- ===================================================
-         History warning
-         =================================================== -->
+        <div v-if="responseItems.length" class="agent-copy">
+          <template v-for="item in responseItems" :key="item.key">
+            <p v-if="item.kind === 'agent'">{{ item.message }}</p>
+            <div v-else class="recovery-item" role="status">
+              <strong>恢复提示<span v-if="item.errorCode"> · {{ item.errorCode }}</span></strong>
+              <p>{{ item.message }}</p>
+            </div>
+          </template>
+        </div>
 
-    <p
-      v-if="!run.eventWindowComplete"
-      class="history-window-note"
-      role="status"
-    >
-      较早的活动事件已过期；
-      当前仅展示服务器仍保留的执行记录，
-      Task Summary 仍然完整。
-    </p>
-
-
-    <!-- ===================================================
-         Main Conversation
-         =================================================== -->
-
-    <div class="thread-items">
-      <template
-        v-for="item in normalItems"
-        :key="item.key"
-      >
-        <!-- User message -->
-        <article
-          v-if="item.kind === 'user'"
-          class="message user-message"
+        <button
+          class="activity-toggle"
+          type="button"
+          :disabled="activityLoading"
+          :aria-expanded="activityExpanded"
+          @click="emit('toggleActivity', run.task)"
         >
-          <div class="message-meta">
-            <strong>
-              你
-            </strong>
+          <PhCaretDown v-if="activityExpanded" :size="15" weight="bold" aria-hidden="true" />
+          <PhCaretRight v-else :size="15" weight="bold" aria-hidden="true" />
+          <span>{{ activityButtonText }}</span>
+        </button>
 
-            <time
-              :datetime="item.timestamp"
-            >
-              {{
-                new Date(
-                  item.timestamp,
-                ).toLocaleString()
-              }}
-            </time>
+        <div v-if="activityExpanded" class="activity-panel">
+          <div v-if="activityLoading" class="activity-loading" role="status">
+            <PhCircleNotch :size="16" aria-hidden="true" />
+            正在加载执行记录…
           </div>
 
-          <p>
-            {{ item.prompt }}
-          </p>
-        </article>
-
-
-        <!-- Agent message -->
-        <article
-          v-else-if="item.kind === 'agent'"
-          class="message agent-message"
-        >
-          <div class="message-meta">
-            <strong>
-              Agent
-            </strong>
-
-            <span
-              v-if="item.step"
-            >
-              Step {{ item.step }}
-            </span>
+          <div v-else-if="activityItems.length" class="activity-list">
+            <ActivityItem
+              v-for="activity in activityItems"
+              :key="activity.key"
+              :activity="activity"
+            />
           </div>
 
-          <p>
-            {{ item.message }}
-          </p>
-        </article>
+          <div v-else-if="activityLoaded" class="activity-empty">
+            此任务没有可展示的工具执行记录。
+          </div>
 
+          <div v-else class="activity-loading" role="status">
+            <PhCircleNotch :size="16" aria-hidden="true" />
+            正在读取执行记录…
+          </div>
+        </div>
 
-        <!-- Recovery -->
-        <article
-          v-else-if="item.kind === 'recovery'"
-          class="recovery-item"
-          role="status"
-        >
-          <strong>
-            恢复提示
-
-            <span
-              v-if="item.errorCode"
-            >
-              · {{ item.errorCode }}
-            </span>
-          </strong>
-
-          <p>
-            {{ item.message }}
-          </p>
-        </article>
-
-
-        <!-- Terminal Summary -->
-        <TaskSummaryCard
-          v-else-if="item.kind === 'terminal'"
-          :task="run.task"
-        />
-      </template>
-    </div>
-
-
-    <!-- ===================================================
-         Activity Toggle
-         =================================================== -->
-
-    <button
-      class="activity-toggle"
-      type="button"
-      :disabled="activityLoading"
-      :aria-expanded="activityExpanded"
-      @click="
-        emit(
-          'toggleActivity',
-          run.task,
-        )
-      "
-    >
-      <span
-        class="activity-toggle-icon"
-        aria-hidden="true"
-      >
-        {{
-          activityExpanded
-            ? '⌄'
-            : '›'
-        }}
-      </span>
-
-      <span>
-        {{ activityButtonText }}
-      </span>
-    </button>
-
-
-    <!-- ===================================================
-         Activity Details
-         =================================================== -->
-
-    <div
-      v-if="activityExpanded"
-      class="activity-panel"
-    >
-      <!-- 加载中 -->
-      <div
-        v-if="activityLoading"
-        class="activity-loading"
-        role="status"
-      >
-        <span
-          class="activity-loading-dot"
-          aria-hidden="true"
-        >
-          ●
-        </span>
-
-        正在加载执行记录…
+        <TaskSummaryCard v-if="terminalItem" :task="run.task" />
       </div>
-
-
-      <!-- 有 Activity -->
-      <div
-        v-else-if="activityItems.length"
-        class="activity-list"
-      >
-        <ActivityItem
-          v-for="activity in activityItems"
-          :key="activity.key"
-          :activity="activity"
-        />
-      </div>
-
-
-      <!-- 已加载，但是没有可展示 Activity -->
-      <div
-        v-else-if="activityLoaded"
-        class="activity-empty"
-      >
-        此任务没有可展示的工具执行记录。
-      </div>
-
-
-      <!--
-        极短暂状态：
-        已经要求展开，但是数据加载还没有正式开始。
-      -->
-      <div
-        v-else
-        class="activity-loading"
-        role="status"
-      >
-        <span
-          class="activity-loading-dot"
-          aria-hidden="true"
-        >
-          ●
-        </span>
-
-        正在读取执行记录…
-      </div>
-    </div>
+    </article>
   </section>
 </template>

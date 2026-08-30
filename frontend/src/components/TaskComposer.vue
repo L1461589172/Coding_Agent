@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { PhArrowUp } from '@phosphor-icons/vue'
+
 import type { ComposerIntent } from '../thread/types'
 
 const props = withDefaults(
@@ -114,7 +116,7 @@ function onKeydown(event: KeyboardEvent) {
         :aria-label="sessionId ? '继续会话' : '开始新会话'"
         :title="sessionId ? '继续会话' : '开始新会话'"
       >
-        <span aria-hidden="true">↑</span>
+        <PhArrowUp :size="18" weight="bold" aria-hidden="true" />
       </button>
     </div>
   </form>

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { PhRobot } from '@phosphor-icons/vue'
+
 import type {
   ConversationThreadViewModel,
 } from '../thread/types'
@@ -45,8 +47,8 @@ const emit = defineEmits<{
       v-if="!thread.runs.length"
       class="thread-empty"
     >
-      <span aria-hidden="true">
-        &gt;_
+      <span class="empty-agent-icon" aria-hidden="true">
+        <PhRobot :size="30" weight="duotone" />
       </span>
 
       <h2>
