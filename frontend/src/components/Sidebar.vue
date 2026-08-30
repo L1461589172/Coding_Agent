@@ -46,7 +46,7 @@ defineEmits<{
       <button v-for="item in historyItems" :key="item.id" type="button"
         :aria-current="item.id === selectedId ? 'page' : undefined"
         @click="$emit('select', item.id)">
-        <span>{{ item.title }}</span>
+        <span class="history-title" :title="item.title">{{ item.title }}</span>
         <small>{{ item.last_task_status || 'EMPTY' }} · {{ item.task_count }} 次任务</small>
       </button>
       <button v-if="hasMore" type="button" :disabled="loading" @click="$emit('loadMore')">

@@ -83,8 +83,30 @@ class HistoryRepository(Protocol):
     async def close(self) -> None: ...
 
 
-def _title(prompt: str) -> str:
-    return " ".join(prompt.split())[:160]
+_SESSION_TITLE_MAX_CHARACTERS = 80
+
+
+def _title_line(value: str) -> str:
+    for raw_line in value.splitlines():
+        line = " ".join(raw_line.split())
+        if not line or line.startswith("```"):
+            continue
+        line = line.strip("#>*_`- ").replace("`", "").strip()
+        if line:
+            return line[:_SESSION_TITLE_MAX_CHARACTERS].rstrip("：:。.!！,，;； ")
+    return ""
+
+
+def _prompt_title(prompt: str) -> str:
+    return _title_line(prompt) or "未命名会话"
+
+
+def _session_title(first_task: Task) -> str:
+    if first_task.status is TaskStatus.COMPLETED and first_task.result:
+        summary = _title_line(first_task.result)
+        if summary:
+            return summary
+    return _prompt_title(first_task.prompt)
 
 
 def _session_cursor(updated_at: datetime, session_id: str) -> str:
@@ -239,7 +261,7 @@ class InMemoryHistoryRepository:
             revision=1,
             data=SessionData(
                 id=session_id,
-                title=_title(task.prompt),
+                title=_prompt_title(task.prompt),
                 created_at=task.created_at,
                 updated_at=task.created_at,
                 task_ids=[task.id],
@@ -395,12 +417,16 @@ class InMemoryHistoryRepository:
                 data=_append_event(current.data, task, event, trace, self.event_limits),
             )
             session = self.sessions[current.data.session_id]
-            session_data = session.data.model_copy(
-                update={
-                    "updated_at": task.finished_at or event.timestamp,
-                    "last_task_status": task.status,
-                }
-            )
+            projection = {
+                "updated_at": task.finished_at or event.timestamp,
+                "last_task_status": task.status,
+            }
+            if current.data.ordinal == 1 and task.status in {
+                TaskStatus.COMPLETED,
+                TaskStatus.FAILED,
+            }:
+                projection["title"] = _session_title(task)
+            session_data = session.data.model_copy(update=projection)
             updated_session = SessionEnvelope(
                 revision=session.revision + 1,
                 data=session_data,
@@ -716,7 +742,7 @@ class JsonHistoryRepository(InMemoryHistoryRepository):
             revision=revision,
             data=SessionData(
                 id=session_id,
-                title=_title(first.prompt),
+                title=_session_title(first),
                 created_at=first.created_at,
                 updated_at=updated,
                 task_ids=[task.data.task.id for task in tasks],

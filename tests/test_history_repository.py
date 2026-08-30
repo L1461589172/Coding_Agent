@@ -31,6 +31,19 @@ class ImmediateRunner:
         return "done"
 
 
+class SessionTitleRunner:
+    def __init__(self):
+        self.results = iter(
+            [
+                "\n# 已创建 Fibonacci 数列工具：\n\n实现函数并完成验证。",
+                "后续检查完成，但不应替换首轮标题。",
+            ]
+        )
+
+    async def run(self, task, events):
+        return next(self.results)
+
+
 def _hold_history_lock(path, ready, release):
     lock = HistoryFileLock(path)
     lock.acquire()
@@ -128,6 +141,35 @@ def test_empty_repository_initializes_v1_and_reopens_idempotently(history_dir, t
         assert (paths.version() / "format.json").read_bytes() == format_before
         assert index_file.read_bytes() == index_before
         await second.close()
+
+    asyncio.run(scenario())
+
+
+def test_session_title_uses_first_result_summary_and_survives_restart(history_dir, tmp_path):
+    async def scenario():
+        first = repository(history_dir, tmp_path)
+        await first.open()
+        manager = TaskManager(SessionTitleRunner(), mode="agent", repository=first)
+        initial = await manager.create("请新建一个 py 文件，实现斐波那契数列函数")
+        await manager._job
+        assert manager.get_session(initial.session_id).title == "已创建 Fibonacci 数列工具"
+
+        follow_up = await manager.create("继续检查刚才的结果", initial.session_id)
+        await manager._job
+        assert follow_up.ordinal == 2
+        assert manager.get_session(initial.session_id).title == "已创建 Fibonacci 数列工具"
+        session_file = first.paths.session(initial.session_id) / "session.json"
+        await manager.close()
+
+        # Simulate a pre-upgrade projection whose title was still the first Prompt.
+        stored = json.loads(session_file.read_text(encoding="utf-8"))
+        stored["data"]["title"] = initial.prompt
+        session_file.write_text(json.dumps(stored, ensure_ascii=False), encoding="utf-8")
+
+        reopened = repository(history_dir, tmp_path)
+        await reopened.open()
+        assert reopened.get_session(initial.session_id).title == "已创建 Fibonacci 数列工具"
+        await reopened.close()
 
     asyncio.run(scenario())
 
